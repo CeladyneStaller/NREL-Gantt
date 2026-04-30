@@ -1031,6 +1031,7 @@ kbd {
       <div class="data-actions">
         <button onclick="exportData()">Export</button>
         <button onclick="document.getElementById('importFile').click()">Import</button>
+        <button onclick="resetAllData()" style="color:#A32D2D;" title="Clear all data and start fresh">Reset</button>
         <input type="file" id="importFile" accept=".json" style="display:none" onchange="importData(event)">
         <button onclick="saveSnapshot()" title="Save current state as the reset target for Clear">Set default</button>
         <span id="snapshotIndicator" class="snapshot-indicator" style="display:none"></span>
@@ -8673,6 +8674,56 @@ function jumpToToday() {
     const left = parseInt(todayLine.style.left) - wrapper.clientWidth / 2 + 340;
     wrapper.scrollTo({ left: Math.max(0, left), behavior: 'smooth' });
   }
+}
+
+function resetAllData() {
+  if (!confirm('⚠️ Reset ALL data?\n\nThis will permanently delete all projects, milestones, objectives, resources, equipment, products, and changelog entries.\n\nThis cannot be undone.')) return;
+  if (!confirm('Are you absolutely sure?')) return;
+
+  if (isSharedMode()) {
+    // Require API key to confirm reset
+    const key = prompt('Enter your JSONBin API key to confirm reset:');
+    if (!key) { alert('Reset cancelled.'); return; }
+
+    // Verify key by making a test request to JSONBin
+    fetch(`https://api.jsonbin.io/v3/b/${JSONBIN_BIN_ID}/meta`, {
+      headers: { 'X-Master-Key': key }
+    }).then(res => {
+      if (!res.ok) { alert('Invalid API key. Reset cancelled.'); return; }
+      // Key verified — proceed with reset
+      localStorage.removeItem(STORAGE_KEY);
+      const emptyPayload = {
+        projects: [], resources: [], equipment: [],
+        products: [], changelog: [], collapsed: [],
+        importAssociations: {}, importProductAssoc: {}, importDelayExclusions: [],
+        nextId: 10000
+      };
+      confSaveRemote(emptyPayload);
+      _resetInMemory();
+    }).catch(() => { alert('Could not verify API key. Reset cancelled.'); });
+  } else {
+    // Standalone mode — fall back to typing RESET
+    const final = prompt('Type RESET to confirm data deletion:');
+    if (final !== 'RESET') { alert('Reset cancelled.'); return; }
+    localStorage.removeItem(STORAGE_KEY);
+    _resetInMemory();
+  }
+}
+
+function _resetInMemory() {
+  projects = defaultProjects.map(sanitizeProject);
+  resources = [...defaultResources];
+  equipment = [...defaultEquipment];
+  products = JSON.parse(JSON.stringify(defaultProducts));
+  changelog = [];
+  collapsed = new Set();
+  importAssociations = {};
+  importProductAssoc = {};
+  importDelayExclusions = new Set();
+  nextId = 10000;
+  saveData();
+  render();
+  showToast('All data has been reset.');
 }
 
 function exportData() {
