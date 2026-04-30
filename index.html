@@ -79,7 +79,7 @@ WHY THIS FILE EXISTS
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>NLR - Southern - Celadyne Project Gantt Chart</title>
+<title>R&D Project Gantt Chart</title>
 <style>
 :root {
   --bg-primary: #ffffff;
@@ -985,7 +985,7 @@ kbd {
 </head>
 <body>
 
-<h1>NLR - Southern - Celadyne Project Gantt Chart</h1>
+<h1>R&D Project Gantt Chart</h1>
 <div id="barTooltip" class="bar-tooltip"></div>
 <p class="subtitle">All data stored locally in your browser. Dependencies, resources, and sub-projects supported.</p>
 
@@ -8706,10 +8706,10 @@ function resetAllData() {
 }
 
 function _resetInMemory() {
-  projects = defaultProjects.map(sanitizeProject);
-  resources = [...defaultResources];
-  equipment = [...defaultEquipment];
-  products = JSON.parse(JSON.stringify(defaultProducts));
+  projects = [];
+  resources = [];
+  equipment = [];
+  products = [];
   changelog = [];
   collapsed = new Set();
   importAssociations = {};
