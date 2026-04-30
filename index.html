@@ -61,6 +61,18 @@ WHY THIS FILE EXISTS
 ══════════════════════════════════════════════════════════════
   Open the hosted URL directly in a browser. JSONBin sync
   works normally. Without JSONBIN credentials, uses localStorage.
+
+══════════════════════════════════════════════════════════════
+  STEP 4 (optional): Pull from external Gantt bins
+══════════════════════════════════════════════════════════════
+  To aggregate timelines from separate Fuel Cell / Electrolyzer
+  Gantts into this summary view:
+  1. Each source Gantt must have its own JSONBin (Step 1 above)
+  2. Edit the EXTERNAL_BINS array in this file's script section
+  3. Paste the Bin ID for each source
+  External data is read-only — edits happen in the source Gantts.
+  Rows appear with an FC or EL badge and cannot be edited here.
+  Polling refreshes external data on the same 30 s cadence.
 ════════════════════════════════════════════════════════════════
 -->
 <html lang="en">
@@ -159,6 +171,15 @@ button:hover, select:hover { background: var(--bg-secondary); border-color: var(
 .quick-complete-btn.done { border-color: #1D9E75; background: #1D9E75; color: white; }
 
 /* ── Read-only mode ── */
+.imported-row { opacity: 0.85; cursor: pointer !important; }
+.imported-row:hover { opacity: 1; }
+.import-badge {
+  display: inline-flex; align-items: center; justify-content: center;
+  font-size: 0.55rem; font-weight: 700; letter-spacing: 0.02em;
+  padding: 1px 4px; border-radius: 3px; flex-shrink: 0; margin-left: 4px;
+  background: var(--bg-tertiary); color: var(--text-secondary);
+  border: 1px solid var(--border);
+}
 body.readonly .gantt-row { cursor: default; }
 body.readonly #confSaveBtn,
 body.readonly #confSyncBtn,
@@ -258,6 +279,15 @@ body.readonly .gantt-row .quick-complete-btn:not(.sg-quick-complete) { display: 
   display: inline-flex; align-items: center; gap: 2px; margin-left: 6px;
   font-size: 0.65rem; color: var(--text-tertiary);
 }
+.tentative-indicator {
+  display: inline-flex; align-items: center; justify-content: center;
+  margin-left: 4px; flex-shrink: 0;
+  font-size: 0.55rem; font-weight: 700; width: 14px; height: 14px;
+  border-radius: 50%; border: 1.5px solid var(--text-tertiary);
+  color: var(--text-tertiary); line-height: 1;
+}
+.gantt-row.tentative-row { opacity: 0.7; }
+.gantt-row.tentative-row:hover { opacity: 0.85; }
 .whatif-banner {
   background: linear-gradient(90deg, #534AB7 0%, #378ADD 100%);
   color: white; padding: 0.75rem 1rem; margin-bottom: 1rem;
@@ -456,8 +486,10 @@ body.readonly .gantt-row .quick-complete-btn:not(.sg-quick-complete) { display: 
   color: var(--text-secondary);
 }
 .summary-chip strong { color: var(--text-primary); font-size: 0.9rem; }
-.summary-chip.warn { border-color: var(--danger); color: var(--danger); background: #FEF2F2; }
-.summary-chip.warn strong { color: var(--danger); }
+.summary-chip.warn { border-color: #A32D2D; color: #A32D2D; background: #FCEBEB; }
+.summary-chip.warn strong { color: #A32D2D; }
+.summary-chip.good { border-color: #3B6D11; color: #3B6D11; background: #EAF3DE; }
+.summary-chip.good strong { color: #3B6D11; }
 .tab-bar { display: flex; gap: 0; margin-bottom: 1rem; border-bottom: 1px solid var(--border); }
 .tab-btn {
   padding: 0.5rem 1rem; border: none; background: none; cursor: pointer;
@@ -975,6 +1007,7 @@ kbd {
   <button class="tab-btn" onclick="switchTab('resources')">Team</button>
   <button class="tab-btn" onclick="switchTab('equipment')">Equipment</button>
   <button class="tab-btn" onclick="switchTab('active')">🔬 Active</button>
+  <button class="tab-btn" onclick="switchTab('milestones')">◆ Milestones</button>
   <button class="tab-btn" onclick="switchTab('changelog')">📋 Changelog</button>
 </div>
 
@@ -1033,12 +1066,34 @@ kbd {
       <label style="display:flex;align-items:center;gap:4px;font-size:0.8rem;color:var(--text-secondary);white-space:nowrap;">
         <input type="checkbox" id="showDeps" checked onchange="render()"> Dependencies
       </label>
+      <label style="font-size:0.8rem;color:var(--text-secondary);display:flex;align-items:center;gap:4px;cursor:pointer;white-space:nowrap;">
+        <input type="checkbox" id="showTentative" onchange="render()"> Tentative
+      </label>
       <button id="confSyncBtn" onclick="manualSync()" style="display:none;padding:0.4rem 0.75rem;font-size:0.8rem;border-radius:6px;border:1px solid var(--border);background:var(--bg-primary);color:var(--text-secondary);cursor:pointer;white-space:nowrap;" title="Pull latest changes from Confluence">
         📡 Sync
       </button>
       <button id="confSaveBtn" onclick="forceSaveToConfluence()" style="display:none;padding:0.4rem 0.875rem;font-size:0.8rem;border-radius:6px;border:none;background:#1D9E75;color:white;cursor:pointer;font-weight:600;white-space:nowrap;" title="Save all changes to Confluence now">
         💾 Save to Confluence
       </button>
+      <div id="importTypesBtnWrap" style="position:relative;display:none;">
+        <button onclick="toggleImportTypesPanel()" style="padding:0.4rem 0.75rem;font-size:0.8rem;border-radius:6px;border:1px solid var(--border);background:var(--bg-primary);color:var(--text-secondary);cursor:pointer;white-space:nowrap;" title="Configure which project types are imported from external Gantts">
+          📥 Import Types
+        </button>
+        <div id="importTypesPanel" style="display:none;position:absolute;top:100%;right:0;margin-top:4px;background:var(--bg-primary);border:1px solid var(--border);border-radius:8px;padding:0.75rem;z-index:100;min-width:220px;box-shadow:0 4px 12px rgba(0,0,0,0.1);">
+          <div style="font-size:0.72rem;font-weight:600;color:var(--text-secondary);text-transform:uppercase;letter-spacing:0.04em;margin-bottom:0.5rem;">Import from external Gantts</div>
+          <label style="display:flex;align-items:center;gap:6px;font-size:0.82rem;padding:3px 0;cursor:pointer;"><input type="checkbox" value="objective" onchange="updateImportTypeFilter()"> Objectives</label>
+          <label style="display:flex;align-items:center;gap:6px;font-size:0.82rem;padding:3px 0;cursor:pointer;"><input type="checkbox" value="stagegate" onchange="updateImportTypeFilter()"> Stage-Gates</label>
+          <label style="display:flex;align-items:center;gap:6px;font-size:0.82rem;padding:3px 0;cursor:pointer;"><input type="checkbox" value="initiative" onchange="updateImportTypeFilter()"> Initiatives</label>
+          <label style="display:flex;align-items:center;gap:6px;font-size:0.82rem;padding:3px 0;cursor:pointer;"><input type="checkbox" value="milestone" onchange="updateImportTypeFilter()"> Milestones</label>
+          <label style="display:flex;align-items:center;gap:6px;font-size:0.82rem;padding:3px 0;cursor:pointer;"><input type="checkbox" value="delivery" onchange="updateImportTypeFilter()"> Product Deliveries</label>
+          <label style="display:flex;align-items:center;gap:6px;font-size:0.82rem;padding:3px 0;cursor:pointer;"><input type="checkbox" value="task" onchange="updateImportTypeFilter()"> Projects / Tasks</label>
+          <label style="display:flex;align-items:center;gap:6px;font-size:0.82rem;padding:3px 0;cursor:pointer;"><input type="checkbox" value="checklist" onchange="updateImportTypeFilter()"> Checklists</label>
+          <div style="border-top:1px solid var(--border-light);margin-top:0.5rem;padding-top:0.5rem;">
+            <button onclick="applyImportTypeFilter()" class="btn-primary btn-sm" style="width:100%;">Apply &amp; Reload</button>
+          </div>
+          <div style="font-size:0.65rem;color:var(--text-tertiary);margin-top:0.4rem;">Descendants of selected types are always included.</div>
+        </div>
+      </div>
     </div>
   </div>
 
@@ -1145,17 +1200,43 @@ kbd {
 
 <div id="activeTab" class="hidden">
   <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:1rem;flex-wrap:wrap;gap:0.75rem;">
-    <div style="display:flex;gap:0.5rem;align-items:center;">
+    <div style="display:flex;gap:0.5rem;align-items:center;flex-wrap:wrap;">
       <select id="activeFilter" onchange="renderActivePanel()" style="font-size:0.8rem;padding:0.3rem 0.6rem;border-radius:6px;border:1px solid var(--border);background:var(--bg-primary);">
         <option value="all">All divisions</option>
         <option value="fuelcell">Fuel Cell</option>
         <option value="electrolyzer">Electrolyzer</option>
         <option value="exploration">Exploration</option>
       </select>
+      <select id="activeTypeFilter" onchange="renderActivePanel()" style="font-size:0.8rem;padding:0.3rem 0.6rem;border-radius:6px;border:1px solid var(--border);background:var(--bg-primary);">
+        <option value="both">Milestones &amp; Objectives</option>
+        <option value="milestones">Milestones only</option>
+        <option value="objectives">Objectives only</option>
+      </select>
+      <select id="activeStatusFilter" onchange="renderActivePanel()" style="font-size:0.8rem;padding:0.3rem 0.6rem;border-radius:6px;border:1px solid var(--border);background:var(--bg-primary);">
+        <option value="all">All statuses</option>
+        <option value="ontrack">On track</option>
+        <option value="watch">Watch closely</option>
+        <option value="atrisk">At risk</option>
+      </select>
     </div>
     <div id="activeSummary" style="display:flex;gap:0.75rem;flex-wrap:wrap;"></div>
   </div>
   <div id="activeGrid"></div>
+</div>
+
+<div id="milestonesTab" class="hidden">
+  <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:1rem;flex-wrap:wrap;gap:0.75rem;">
+    <div style="display:flex;gap:0.5rem;align-items:center;">
+      <select id="msFilter" onchange="renderMilestonesPanel()" style="font-size:0.8rem;padding:0.3rem 0.6rem;border-radius:6px;border:1px solid var(--border);background:var(--bg-primary);">
+        <option value="all">All divisions</option>
+        <option value="fuelcell">Fuel Cell</option>
+        <option value="electrolyzer">Electrolyzer</option>
+        <option value="exploration">Exploration</option>
+      </select>
+    </div>
+    <div id="msSummary" style="display:flex;gap:0.75rem;flex-wrap:wrap;"></div>
+  </div>
+  <div id="msGrid"></div>
 </div>
 
 <div class="modal-overlay" id="modalOverlay" onclick="closeModal(event)">
@@ -1251,6 +1332,11 @@ kbd {
       <label for="projLocked">🔒 Lock timeline (prevent auto-adjustment from dependencies)</label>
     </div>
 
+    <div class="checkbox-group">
+      <input type="checkbox" id="projTentative">
+      <label for="projTentative">❓ Tentative (possibility, not yet a firm commitment)</label>
+    </div>
+
     <!-- ── Progress (Task) ────────────────────────────── -->
     <div id="progressTaskSection">
 
@@ -1311,6 +1397,39 @@ kbd {
         </div>
         <span id="milestoneKpiProgressText" class="kpi-progress-text">0%</span>
       </div>
+      <div style="display:flex;gap:1rem;margin-top:0.75rem;">
+        <div class="form-group" style="flex:1;">
+          <label for="projTrl">TRL <span style="font-size:0.65rem;color:var(--text-tertiary);">(Technology Readiness)</span></label>
+          <select id="projTrl" style="width:100%;">
+            <option value="">—</option>
+            <option value="1">1 – Basic principles</option>
+            <option value="2">2 – Concept formulated</option>
+            <option value="3">3 – Proof of concept</option>
+            <option value="4">4 – Lab validation</option>
+            <option value="5">5 – Relevant environment</option>
+            <option value="6">6 – Demonstrated prototype</option>
+            <option value="7">7 – System prototype</option>
+            <option value="8">8 – Qualified system</option>
+            <option value="9">9 – Proven in operation</option>
+          </select>
+        </div>
+        <div class="form-group" style="flex:1;">
+          <label for="projMrl">MRL <span style="font-size:0.65rem;color:var(--text-tertiary);">(Manufacturing Readiness)</span></label>
+          <select id="projMrl" style="width:100%;">
+            <option value="">—</option>
+            <option value="1">1 – Basic mfg identified</option>
+            <option value="2">2 – Mfg concepts defined</option>
+            <option value="3">3 – Mfg proof of concept</option>
+            <option value="4">4 – Lab capability</option>
+            <option value="5">5 – Prototype capability</option>
+            <option value="6">6 – Pilot line</option>
+            <option value="7">7 – Low-rate production</option>
+            <option value="8">8 – Full-rate production</option>
+            <option value="9">9 – Proven & optimized</option>
+            <option value="10">10 – Lean / world-class</option>
+          </select>
+        </div>
+      </div>
     </div>
 
     <!-- ── Progress (Initiative: from sub-projects) ───── -->
@@ -1332,6 +1451,16 @@ kbd {
       <div class="add-dep">
         <select id="assocObjSelect"><option value="">Select an objective...</option></select>
         <button type="button" onclick="addAssocObjective()">Link</button>
+      </div>
+    </div>
+
+    <!-- ── Linked External Projects ──────────────────── -->
+    <div id="importAssocSection" class="hidden">
+      <div class="section-title">Linked External Projects</div>
+      <div id="importAssocList"></div>
+      <div class="add-dep">
+        <select id="importAssocSelect"><option value="">Select an external project...</option></select>
+        <button type="button" onclick="addImportAssoc()">Link</button>
       </div>
     </div>
 
@@ -1476,6 +1605,10 @@ kbd {
       <input type="text" id="productName" placeholder="e.g., Industrial Electrolyzer">
     </div>
     <div class="form-group">
+      <label for="productCode">Milestone code <span style="font-size:0.72rem;color:var(--text-tertiary);">(prefix for milestone numbering, e.g., Tera, Dura1)</span></label>
+      <input type="text" id="productCode" placeholder="e.g., Tera" maxlength="10" style="max-width:180px;">
+    </div>
+    <div class="form-group">
       <label for="productDescription">Description</label>
       <textarea id="productDescription" placeholder="Product line overview, market, technology notes…" style="min-height:60px;"></textarea>
     </div>
@@ -1506,6 +1639,47 @@ kbd {
   </div>
 </div>
 
+<!-- ── Import Link Panel (lightweight modal for imported projects) ── -->
+<div class="modal-overlay" id="importLinkOverlay" onclick="closeImportLinkPanel(event)">
+  <div class="modal" style="max-width:520px;" onclick="event.stopPropagation()">
+    <h2 id="importLinkTitle" style="display:flex;align-items:center;gap:8px;">External Project</h2>
+    <div class="modal-body">
+      <div id="importLinkInfo" style="font-size:0.8rem;color:var(--text-secondary);margin-bottom:1rem;"></div>
+      <div class="form-group">
+        <label for="importLinkProduct">Product line</label>
+        <select id="importLinkProduct" onchange="updateImportLinkModel()">
+          <option value="">None</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label for="importLinkModel">Model / Generation</label>
+        <select id="importLinkModel">
+          <option value="">None</option>
+        </select>
+      </div>
+      <div class="form-group" style="margin-top:0.75rem;">
+        <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:0.82rem;">
+          <input type="checkbox" id="importLinkExcludeDelay">
+          Exclude from parent timeline delays
+        </label>
+        <div style="font-size:0.7rem;color:var(--text-tertiary);margin-top:2px;margin-left:22px;">
+          When checked, this project's dates won't extend or delay the linked local parent's timeline or ghost bar.
+        </div>
+      </div>
+      <div class="section-title" style="margin-top:1rem;">Linked Local Projects</div>
+      <div id="importLinkLocalList"></div>
+      <div class="add-dep">
+        <select id="importLinkLocalSelect"><option value="">Select a local project...</option></select>
+        <button type="button" onclick="addImportLinkLocal()">Link</button>
+      </div>
+    </div>
+    <div class="modal-actions">
+      <button class="btn-primary" onclick="saveImportLinkPanel()">Save</button>
+      <button onclick="closeImportLinkPanel()">Cancel</button>
+    </div>
+  </div>
+</div>
+
 <script>
 const STORAGE_KEY = 'rd_gantt_v7';
 const SNAPSHOT_KEY = 'rd_gantt_v7_snapshot';
@@ -1532,6 +1706,16 @@ const SNAPSHOT_KEY = 'rd_gantt_v7_snapshot';
 // ╚══════════════════════════════════════════════════════════════╝
 const JSONBIN_BIN_ID  = '69cead0f36566621a8731eec';   // ← e.g. '64f2a1c3a0e3560baf9ab12e'
 const JSONBIN_API_KEY = '$2a$10$yJlmc9C76UAAdqpnsNR0oeboCCOK/VS1YJnFU4kH4kJrySTg2Ue92';   // ← e.g. '$2a$10$...'
+
+// ── External Gantt sources (read-only import) ──────────────
+// Set these to pull timelines from separate Fuel Cell / Electrolyzer Gantts.
+// Leave as '' to skip that source.
+const EXTERNAL_BINS = [
+  { binId: '', label: 'Fuel Cell',    source: 'fc' },   // ← paste Fuel Cell bin ID
+  { binId: '', label: 'Electrolyzer', source: 'el' },   // ← paste Electrolyzer bin ID
+];
+// Uses the same API key as the main bin. If external bins use a different
+// account, override per-entry: { binId: '...', apiKey: '...', label: '...', source: '...' }
 
 // Read-only mode: add ?readonly=1 to the URL to hide all editing UI.
 // Stage-gate quick-complete (✓) still works in readonly mode.
@@ -1601,8 +1785,14 @@ async function confLoadRemote() {
   }
 }
 
+let _pendingSavePayload = null;
+
 async function confSaveRemote(payload) {
-  if (confIsSaving) return;
+  if (confIsSaving) {
+    // Queue this payload — it will be saved when the current save completes
+    _pendingSavePayload = payload;
+    return;
+  }
   if (!JSONBIN_BIN_ID || !JSONBIN_API_KEY) {
     updateSyncStatus('error', 'Set JSONBIN_BIN_ID and JSONBIN_API_KEY in the script to enable shared saving');
     return;
@@ -1635,6 +1825,12 @@ async function confSaveRemote(payload) {
     updateSyncStatus('error', `Save error: ${e.message}`);
   } finally {
     confIsSaving = false;
+    // Drain pending save if one was queued during this save
+    if (_pendingSavePayload) {
+      const queued = _pendingSavePayload;
+      _pendingSavePayload = null;
+      confSaveRemote(queued);
+    }
   }
 }
 
@@ -1661,21 +1857,175 @@ async function confPollForUpdates() {
 }
 async function confPollForUpdates() {
   if (!isSharedMode() || confIsSaving) return;
+  let didUpdate = false;
   try {
     const att = await confFindAttachment();
     if (!att) return;
     const remoteVersion = att.version && att.version.number ? att.version.number : 0;
     if (remoteVersion > confVersion) {
-      // Someone else saved — reload
       const data = await confLoadRemote();
       if (data) {
         applyLoadedData(data);
-        render();
+        didUpdate = true;
         showToast('📡 Plan updated by ' + (data._savedBy || 'another user'));
         updateSyncStatus('synced');
       }
     }
   } catch(e) {}
+  // Always refresh external bins — must re-merge after applyLoadedData
+  // wipes imported projects from the array
+  try {
+    const { imported, fetchedSources } = await fetchAllExternalBins();
+    if (imported.length > 0 || fetchedSources.length > 0) {
+      const hash = JSON.stringify(imported.map(p => p.id + ':' + p.start + ':' + p.end + ':' + p.progress));
+      // Always merge to keep imported projects in the array
+      mergeImportedIntoProjects(imported, fetchedSources);
+      if (hash !== _extBinHashes._last) {
+        _extBinHashes._last = hash;
+        didUpdate = true; // external data actually changed — re-render
+      }
+    }
+  } catch(e) {}
+  if (didUpdate) render();
+}
+
+// ── External-bin helpers (read-only import) ─────────────────
+async function fetchExternalBin(entry) {
+  if (!entry.binId) return null;
+  const key = entry.apiKey || JSONBIN_API_KEY;
+  try {
+    const r = await fetch(`https://api.jsonbin.io/v3/b/${entry.binId}/latest`, {
+      headers: { 'Content-Type': 'application/json', 'X-Master-Key': key, 'X-Bin-Meta': 'false' }
+    });
+    if (!r.ok) { console.warn(`External bin ${entry.source} load failed (${r.status})`); return null; }
+    const wrapper = await r.json();
+    return wrapper.record || wrapper;
+  } catch(e) { console.warn(`External bin ${entry.source} error:`, e); return null; }
+}
+
+/** Namespace all IDs in an imported project array so they don't collide with local data */
+function remapImportedProjects(srcProjects, source, label) {
+  const prefix = source + '_';
+  return srcProjects.map(p => {
+    const newId = prefix + p.id;
+    const newParentId = (p.parentId != null && p.parentId !== p.id) ? prefix + p.parentId : null;
+    const remapped = {
+      ...p,
+      id: newId,
+      parentId: newParentId,
+      dependencies: Array.isArray(p.dependencies) ? p.dependencies.map(d => {
+        if (typeof d === 'object' && d !== null) return { ...d, id: prefix + d.id };
+        return prefix + d;
+      }) : [],
+      associatedObjectives: Array.isArray(p.associatedObjectives)
+        ? p.associatedObjectives.map(id => prefix + id) : [],
+      _imported: true,
+      _importSource: source,
+      _importLabel: label,
+    };
+    // Remap stageGate parentId refs if present
+    if (remapped.isStageGate && remapped.parentId) {
+      // already handled above
+    }
+    return remapped;
+  });
+}
+
+/** Filter imported projects to only include types in importTypeFilter and their descendants */
+function filterImportedByType(importedProjects) {
+  if (!importTypeFilter || importTypeFilter.length === 0) return importedProjects; // no filter = import all
+  const typeSet = new Set(importTypeFilter);
+  
+  // Find projects that directly match the filter
+  const matchIds = new Set();
+  importedProjects.forEach(p => {
+    const ptype = p.projectType || 'task';
+    if (typeSet.has(ptype)) matchIds.add(p.id);
+    if (p.isStageGate && typeSet.has('stagegate')) matchIds.add(p.id);
+  });
+  
+  // Include all descendants of matching projects
+  let changed = true;
+  while (changed) {
+    changed = false;
+    importedProjects.forEach(p => {
+      if (!matchIds.has(p.id) && p.parentId && matchIds.has(p.parentId)) {
+        matchIds.add(p.id);
+        changed = true;
+      }
+    });
+  }
+  
+  const filtered = importedProjects.filter(p => matchIds.has(p.id));
+  
+  // Reparent orphans: if a project's parent was filtered out, promote it to top-level
+  const filteredIds = new Set(filtered.map(p => p.id));
+  filtered.forEach(p => {
+    if (p.parentId && !filteredIds.has(p.parentId)) {
+      p.parentId = null;
+    }
+  });
+  
+  return filtered;
+}
+
+/** Fetch all external bins, remap, return merged array of imported projects */
+async function fetchAllExternalBins() {
+  const active = EXTERNAL_BINS.filter(e => e.binId);
+  if (active.length === 0) return { imported: [], fetchedSources: [] };
+  const results = await Promise.all(active.map(e => fetchExternalBin(e)));
+  let imported = [];
+  const fetchedSources = [];
+  for (let i = 0; i < active.length; i++) {
+    const data = results[i];
+    if (!data || !Array.isArray(data.projects)) continue;
+    fetchedSources.push(active[i].source);
+    const remapped = remapImportedProjects(data.projects, active[i].source, active[i].label);
+    imported = imported.concat(remapped);
+  }
+  // Apply type filter
+  imported = filterImportedByType(imported);
+  return { imported, fetchedSources };
+}
+
+// Track external-bin version hashes so we only re-render on change
+let _extBinHashes = {};
+
+// ── Import type filter UI ─────────────────────────────────
+function toggleImportTypesPanel() {
+  const panel = document.getElementById('importTypesPanel');
+  const isVisible = panel.style.display !== 'none';
+  panel.style.display = isVisible ? 'none' : 'block';
+  if (!isVisible) {
+    // Sync checkboxes with current filter
+    const checkboxes = panel.querySelectorAll('input[type="checkbox"]');
+    checkboxes.forEach(cb => {
+      cb.checked = importTypeFilter.includes(cb.value);
+    });
+  }
+}
+
+function updateImportTypeFilter() {
+  // Read current checkbox state (but don't apply yet)
+}
+
+async function applyImportTypeFilter() {
+  const panel = document.getElementById('importTypesPanel');
+  const checkboxes = panel.querySelectorAll('input[type="checkbox"]');
+  importTypeFilter = [];
+  checkboxes.forEach(cb => { if (cb.checked) importTypeFilter.push(cb.value); });
+  panel.style.display = 'none';
+  // Save and re-fetch externals with new filter
+  saveData();
+  const { imported, fetchedSources } = await fetchAllExternalBins();
+  if (imported.length > 0 || fetchedSources.length > 0) mergeImportedIntoProjects(imported, fetchedSources);
+  render();
+  showToast('📥 Import filter updated — ' + (importTypeFilter.length === 0 ? 'importing all types' : importTypeFilter.join(', ')));
+}
+
+function showImportTypesBtn() {
+  const wrap = document.getElementById('importTypesBtnWrap');
+  if (wrap && EXTERNAL_BINS.some(e => e.binId)) wrap.style.display = '';
 }
 
 function startConfPoll() {
@@ -1698,7 +2048,7 @@ function updateSyncStatus(state, msg) {
   const ts = confLastSavedAt ? ' · ' + new Date(confLastSavedAt).toLocaleTimeString('en-US', { hour:'2-digit', minute:'2-digit' }) : '';
   el.innerHTML = `<span style="color:${s.color};font-size:0.75rem;">${s.icon} ${s.text}${ts}</span>`;
 }
-const SCHEDULE_BUFFER_MS = 2 * 24 * 60 * 60 * 1000; // 2-day buffer
+const SCHEDULE_BUFFER_MS = 3 * 24 * 60 * 60 * 1000; // 3-day buffer
 let divisionColors = {
   fuelcell: { bg: '#EEEDFE', bar: '#534AB7', text: '#3C3489' },
   electrolyzer: { bg: '#E1F5EE', bar: '#1D9E75', text: '#085041' },
@@ -1729,16 +2079,27 @@ const defaultProducts = [
 // Calculate parent project dates based on children
 function calculateParentDates() {
   const parentDates = {};
+  const effMap = _buildEffParentMap();
   
   // Process from deepest level up
   function processLevel(parentId) {
-    const children = getChildren(parentId);
+    // Manually completed objectives use their completedDate (or own end) — don't roll up from children
+    const parentProj = projects.find(p => p.id === parentId);
+    if (parentProj && parentProj.manuallyCompleted && parentProj.projectType === 'objective') {
+      const effectiveEnd = parentProj.completedDate || parentProj.end;
+      return { start: parentProj.start, end: effectiveEnd };
+    }
+    
+    const children = getEffectiveChildren(parentId, effMap);
     if (children.length === 0) return null;
     
     let minStart = null;
     let maxEnd = null;
     
     children.forEach(child => {
+      // Skip imported projects excluded from delay propagation (and their subtrees)
+      if (importDelayExclusions.has(child.id)) return;
+      
       // Recursively process children first
       const childRange = processLevel(child.id);
       
@@ -1763,8 +2124,8 @@ function calculateParentDates() {
     return minStart && maxEnd ? { start: formatDate(minStart), end: formatDate(maxEnd) } : null;
   }
   
-  // Start from top-level projects
-  projects.filter(p => !p.parentId).forEach(p => {
+  // Start from top-level projects (those with no effective parent)
+  projects.filter(p => !getEffectiveParentId(p, effMap)).forEach(p => {
     processLevel(p.id);
   });
   
@@ -1776,17 +2137,21 @@ function calculateAdjustedDates() {
   const adjusted = {};
   const delays = {};
   const parentDates = calculateParentDates();
+  const effMap = _buildEffParentMap();
   
   // Initialize with original dates (or parent-calculated dates)
   projects.forEach(p => {
-    const isParent = hasChildren(p.id);
-    const dates = isParent && parentDates[p.id] ? parentDates[p.id] : { start: p.start, end: p.end };
+    const isParent = hasEffectiveChildren(p.id, effMap);
+    // Manually completed objectives use completedDate as effective end for cascade
+    const useOwnDates = p.manuallyCompleted && p.projectType === 'objective';
+    const effectiveEnd = useOwnDates ? (p.completedDate || p.end) : p.end;
+    const dates = (isParent && parentDates[p.id] && !useOwnDates) ? parentDates[p.id] : { start: p.start, end: effectiveEnd };
     adjusted[p.id] = { 
       start: dates.start, 
       end: dates.end, 
       originalStart: p.start, 
       originalEnd: p.end,
-      isParentCalculated: isParent && !!parentDates[p.id]
+      isParentCalculated: isParent && !!parentDates[p.id] && !useOwnDates
     };
     delays[p.id] = 0;
   });
@@ -1813,9 +2178,9 @@ function calculateAdjustedDates() {
   // so blocking-dep logic treats it as finishing today.
   const todayTime = today.getTime();
   projects.forEach(p => {
-    if (isComplete(p)) return;  // complete — skip overdue detection
+    if (isComplete(p)) return;  // complete
     if (p.locked) return;
-    if (hasChildren(p.id)) return;
+    if (hasEffectiveChildren(p.id, effMap)) return;
 
     const adj = adjusted[p.id];
     const adjEnd = parseDate(adj.end).getTime();
@@ -1839,7 +2204,7 @@ function calculateAdjustedDates() {
     if (!p || !p.dependencies || p.dependencies.length === 0) return;
     
     // Skip locked projects, parent projects, and already-overdue projects
-    if (p.locked || hasChildren(id) || adjusted[id]?.overdueToday) return;
+    if (p.locked || hasEffectiveChildren(id, effMap) || adjusted[id]?.overdueToday) return;
     
     // Process blocking deps (Finish-to-Start) and synergistic deps (Finish-to-Finish)
     let latestBlockingEnd = null;
@@ -1908,7 +2273,11 @@ function calculateAdjustedDates() {
   
   // Recalculate parent dates after adjustments
   function recalcParent(parentId) {
-    const children = getChildren(parentId);
+    // Don't override manually completed objectives — their own end date is authoritative
+    const parentProj = projects.find(p => p.id === parentId);
+    if (parentProj && parentProj.manuallyCompleted && parentProj.projectType === 'objective') return;
+    
+    const children = getEffectiveChildren(parentId, effMap);
     if (children.length === 0) return;
     
     let minStart = null;
@@ -1916,6 +2285,9 @@ function calculateAdjustedDates() {
     let totalDelay = 0;
     
     children.forEach(child => {
+      // Skip imported projects excluded from delay propagation
+      if (importDelayExclusions.has(child.id)) return;
+      
       // Recursively process children first
       recalcParent(child.id);
       
@@ -1950,11 +2322,11 @@ function calculateAdjustedDates() {
     }
   }
   
-  projects.filter(p => !p.parentId && hasChildren(p.id)).forEach(p => {
+  projects.filter(p => !getEffectiveParentId(p, effMap) && hasEffectiveChildren(p.id, effMap)).forEach(p => {
     recalcParent(p.id);
   });
 
-  projects.filter(p => !p.parentId && hasChildren(p.id)).forEach(p => {
+  projects.filter(p => !getEffectiveParentId(p, effMap) && hasEffectiveChildren(p.id, effMap)).forEach(p => {
     recalcParent(p.id);
   });
 
@@ -2012,6 +2384,9 @@ function calculateAdjustedDates() {
   //   By this point all objectives have correct adjusted end dates, so projects depending
   //   on those objectives will see the right latestBlockingEnd.
   runCascadePass(p => !p.isStageGate);
+
+  // Only mark delays of 3+ days; smaller shifts are noise
+  for (const id in delays) { if (delays[id] > 0 && delays[id] < 3) delays[id] = 0; }
 
   return { adjusted, delays };
 }
@@ -2192,6 +2567,11 @@ let tempKeyResults = [];
 let tempStageGates = [];
 let tempStageGatesLinked = true;
 let tempAssocObjectives = [];
+let importAssociations = {};   // { [localProjectId]: ['fc_123', 'el_45', ...] }
+let importProductAssoc = {};   // { [importedProjectId]: { productLine, productModel } }
+let importDelayExclusions = new Set(); // imported project IDs excluded from parent delay propagation
+let importTypeFilter = ['objective', 'stagegate']; // project types to import from external bins
+let tempImportAssoc = [];      // temp array for modal editing
 let collapsed = new Set();
 let resourceMeta = {}; // { [name]: { title, division, managerId } }
 let equipmentMeta = {}; // { [name]: { description } }
@@ -2379,7 +2759,11 @@ function sanitizeProject(p) {
     datePrecision: p.datePrecision || 'exact',
     completedDate: p.completedDate || null,
     manuallyCompleted: !!p.manuallyCompleted,
-    baselineEndDate: p.baselineEndDate || null
+    baselineEndDate: p.baselineEndDate || null,
+    tentative: !!p.tentative,
+    trl: p.trl || null,
+    mrl: p.mrl || null,
+    milestoneReport: p.milestoneReport || null
   };
 }
 
@@ -2394,15 +2778,49 @@ function applyLoadedData(data) {
   if (data.resourceMeta) resourceMeta = data.resourceMeta;
   if (data.equipmentMeta) equipmentMeta = data.equipmentMeta;
   if (Array.isArray(data.changelog)) changelog = data.changelog;
-  nextId = Math.max(...projects.map(p => p.id), 9999) + 1;
+  if (data.importAssociations && typeof data.importAssociations === 'object') importAssociations = data.importAssociations;
+  if (data.importProductAssoc && typeof data.importProductAssoc === 'object') importProductAssoc = data.importProductAssoc;
+  importDelayExclusions = new Set(Array.isArray(data.importDelayExclusions) ? data.importDelayExclusions : []);
+  if (Array.isArray(data.importTypeFilter)) importTypeFilter = data.importTypeFilter;
+  nextId = Math.max(...projects.filter(p => typeof p.id === 'number').map(p => p.id), 9999) + 1;
 }
 
 function getPayload() {
   return {
-    projects, resources, equipment, products,
+    projects: projects.filter(p => !p._imported),
+    resources, equipment, products,
     divisionColors, productColors, resourceMeta, equipmentMeta,
-    changelog, collapsed: [...collapsed]
+    changelog, collapsed: [...collapsed].filter(id => typeof id === 'number'),
+    importAssociations,
+    importProductAssoc,
+    importDelayExclusions: [...importDelayExclusions],
+    importTypeFilter
   };
+}
+
+/** Merge imported projects into the main projects array, replacing any prior imports */
+function mergeImportedIntoProjects(imported, fetchedSources) {
+  // Only remove imported projects from sources that were successfully fetched
+  // Keep existing imports for sources that failed (so they don't vanish on a transient error)
+  const fetchedSet = new Set(fetchedSources || []);
+  projects = projects.filter(p => !(p._imported && fetchedSet.has(p._importSource)));
+  projects = projects.concat(imported.map(sanitizeProject));
+  // Prune stale import association refs — only for sources we actually refreshed
+  const importedIds = new Set(imported.map(p => p.id));
+  // Also include IDs of imported projects we KEPT (from failed sources)
+  projects.filter(p => p._imported && !fetchedSet.has(p._importSource)).forEach(p => importedIds.add(p.id));
+  for (const [localId, linked] of Object.entries(importAssociations)) {
+    const pruned = linked.filter(id => importedIds.has(id));
+    if (pruned.length > 0) importAssociations[localId] = pruned;
+    else delete importAssociations[localId];
+  }
+  // Prune stale product associations and delay exclusions
+  for (const id of Object.keys(importProductAssoc)) {
+    if (!importedIds.has(id)) delete importProductAssoc[id];
+  }
+  for (const id of importDelayExclusions) {
+    if (!importedIds.has(id)) importDelayExclusions.delete(id);
+  }
 }
 
 async function loadData() {
@@ -2413,31 +2831,40 @@ async function loadData() {
     if (data) {
       applyLoadedData(data);
       updateSyncStatus('saved');
-      startConfPoll();
-      return;
+    } else {
+      projects = defaultProjects.map(sanitizeProject);
+      resources = [...defaultResources];
+      equipment = [...defaultEquipment];
+      products = JSON.parse(JSON.stringify(defaultProducts));
+      nextId = 10000;
     }
-    // confLoadRemote returned null — first run (no attachment yet) or an error.
-    // Do NOT fall back to localStorage — that would show one user's private cache to others.
-    // Load defaults so the UI is usable; the error is shown in the sync status bar.
+    // Fetch external Gantt bins (Fuel Cell / Electrolyzer)
+    const { imported, fetchedSources } = await fetchAllExternalBins();
+    if (imported.length > 0 || fetchedSources.length > 0) mergeImportedIntoProjects(imported, fetchedSources);
+    startConfPoll();
+    return;
+  }
+  // Not on Confluence — localStorage standalone mode
+  updateSyncStatus('offline');
+  const saved = localStorage.getItem(STORAGE_KEY);
+  if (saved) {
+    try { applyLoadedData(JSON.parse(saved)); } catch(e) {
+      projects = defaultProjects.map(sanitizeProject);
+      resources = [...defaultResources];
+      equipment = [...defaultEquipment];
+      products = JSON.parse(JSON.stringify(defaultProducts));
+      nextId = 10000;
+    }
+  } else {
     projects = defaultProjects.map(sanitizeProject);
     resources = [...defaultResources];
     equipment = [...defaultEquipment];
     products = JSON.parse(JSON.stringify(defaultProducts));
     nextId = 10000;
-    startConfPoll();
-    return;
   }
-  // Not on Confluence — localStorage is fine (standalone mode, truly local to this browser)
-  updateSyncStatus('offline');
-  const saved = localStorage.getItem(STORAGE_KEY);
-  if (saved) {
-    try { applyLoadedData(JSON.parse(saved)); return; } catch(e) {}
-  }
-  projects = defaultProjects.map(sanitizeProject);
-  resources = [...defaultResources];
-  equipment = [...defaultEquipment];
-  products = JSON.parse(JSON.stringify(defaultProducts));
-  nextId = 10000;
+  // Also fetch externals in standalone mode
+  const { imported, fetchedSources } = await fetchAllExternalBins();
+  if (imported.length > 0 || fetchedSources.length > 0) mergeImportedIntoProjects(imported, fetchedSources);
 }
 
 function saveData() {
@@ -2461,6 +2888,13 @@ function hexToColorSet(hex) {
 }
 
 function getProjectColors(p) {
+  // For imported projects, check local product association
+  if (p._imported) {
+    const assoc = importProductAssoc[p.id];
+    if (assoc && assoc.productLine && productColors[assoc.productLine]) {
+      return hexToColorSet(productColors[assoc.productLine]);
+    }
+  }
   // Product color takes priority if set
   if (p.productLine && productColors[p.productLine]) {
     return hexToColorSet(productColors[p.productLine]);
@@ -2496,6 +2930,79 @@ function hasChildren(projectId) {
   return projects.some(p => p.parentId === projectId);
 }
 
+/** Build the effective parent map from importAssociations (reparent imported top-levels under local projects) */
+function _buildEffParentMap() {
+  const map = {};
+  for (const [localId, linked] of Object.entries(importAssociations)) {
+    for (const impId of (linked || [])) {
+      const imp = projects.find(x => x.id === impId);
+      if (imp && imp._imported && !imp.parentId) {
+        map[impId] = typeof localId === 'string' && !isNaN(localId) ? parseInt(localId) : localId;
+      }
+    }
+  }
+  return map;
+}
+
+function getEffectiveParentId(p, effMap) {
+  if (p._imported && !p.parentId && effMap[p.id] != null) return effMap[p.id];
+  return p.parentId;
+}
+
+function getEffectiveChildren(parentId, effMap) {
+  return projects.filter(p => getEffectiveParentId(p, effMap) === parentId);
+}
+
+function hasEffectiveChildren(projectId, effMap) {
+  return projects.some(p => getEffectiveParentId(p, effMap) === projectId);
+}
+
+function getEffectiveProductLine(p) {
+  if (p._imported) {
+    const assoc = importProductAssoc[p.id];
+    if (assoc && assoc.productLine) return assoc.productLine;
+    // Walk up imported parent chain (with cycle guard)
+    const seen = new Set([p.id]);
+    let cur = projects.find(x => x.id === p.parentId);
+    while (cur && cur._imported && !seen.has(cur.id)) {
+      seen.add(cur.id);
+      const curAssoc = importProductAssoc[cur.id];
+      if (curAssoc && curAssoc.productLine) return curAssoc.productLine;
+      cur = projects.find(x => x.id === cur.parentId);
+    }
+  }
+  return p.productLine || '';
+}
+
+function getEffectiveDivision(p) {
+  if (p._imported) {
+    // Check own product association first
+    const assoc = importProductAssoc[p.id];
+    if (assoc && assoc.productLine) {
+      const prod = products.find(pr => pr.id === assoc.productLine);
+      if (prod) return prod.division;
+    }
+    // Check direct local associations
+    const locals = getLocalAssocForImported(p.id);
+    if (locals.length > 0) return locals[0].division;
+    // Walk up imported parent chain to find an ancestor with an association
+    const _seen = new Set([p.id]);
+    let cur = projects.find(x => x.id === p.parentId);
+    while (cur && cur._imported && !_seen.has(cur.id)) {
+      _seen.add(cur.id);
+      const curAssoc = importProductAssoc[cur.id];
+      if (curAssoc && curAssoc.productLine) {
+        const prod = products.find(pr => pr.id === curAssoc.productLine);
+        if (prod) return prod.division;
+      }
+      const curLocals = getLocalAssocForImported(cur.id);
+      if (curLocals.length > 0) return curLocals[0].division;
+      cur = projects.find(x => x.id === cur.parentId);
+    }
+  }
+  return p.division || '';
+}
+
 function getVisibleProjects(divisionOverride = null) {
   // Multi-select filter state (empty set = show all)
   const divSel   = divisionOverride ? new Set([divisionOverride]) : filterState.division;
@@ -2504,6 +3011,8 @@ function getVisibleProjects(divisionOverride = null) {
   const prodSel  = filterState.product;
   const searchEl = document.getElementById('searchFilter');
   const searchTerm = searchEl ? searchEl.value.trim().toLowerCase() : '';
+  const showTentativeEl = document.getElementById('showTentative');
+  const hideTentative = showTentativeEl && !showTentativeEl.checked;
   const result = [];
 
   // If searching, collect all matching projects and their ancestors/descendants
@@ -2542,8 +3051,8 @@ function getVisibleProjects(divisionOverride = null) {
         else if (layer.key === 'end')  { va = parseDate(a.end);   vb = parseDate(b.end); }
         else if (layer.key === 'name') { const c = a.name.localeCompare(b.name); if (c !== 0) return c * dir; continue; }
         else if (layer.key === 'progress') { va = a.progress || 0; vb = b.progress || 0; }
-        else if (layer.key === 'division') { const c = (a.division||'').localeCompare(b.division||''); if (c !== 0) return c * dir; continue; }
-        else if (layer.key === 'product')  { const pa = (products.find(x=>x.id===a.productLine)||{}).name||''; const pb = (products.find(x=>x.id===b.productLine)||{}).name||''; const c = pa.localeCompare(pb); if (c !== 0) return c * dir; continue; }
+        else if (layer.key === 'division') { const c = getEffectiveDivision(a).localeCompare(getEffectiveDivision(b)); if (c !== 0) return c * dir; continue; }
+        else if (layer.key === 'product')  { const pa = (products.find(x=>x.id===getEffectiveProductLine(a))||{}).name||''; const pb = (products.find(x=>x.id===getEffectiveProductLine(b))||{}).name||''; const c = pa.localeCompare(pb); if (c !== 0) return c * dir; continue; }
         else if (layer.key === 'type') { const c = (a.projectType||'task').localeCompare(b.projectType||'task'); if (c !== 0) return c * dir; continue; }
         else continue;
         const diff = (va - vb) * dir;
@@ -2569,27 +3078,40 @@ function getVisibleProjects(divisionOverride = null) {
   // Check if a project or any of its descendants overlaps the window
   function subtreeInWindow(p) {
     if (projectInWindow(p)) return true;
-    return getChildren(p.id).some(child => subtreeInWindow(child));
+    return localGetChildren(p.id).some(child => subtreeInWindow(child));
+  }
+
+  // ── Effective parent map: reparent imported top-level projects under linked locals ──
+  const _effParent = _buildEffParentMap();
+  function effectiveParentId(p) {
+    return getEffectiveParentId(p, _effParent);
+  }
+  function localGetChildren(parentId) {
+    return getEffectiveChildren(parentId, _effParent);
   }
 
   function addWithChildren(project, depth = 0) {
+    // Hide tentative projects (and their subtrees) when toggle is off
+    if (hideTentative && project.tentative) return;
     if (!project.isStageGate) {
-      if (divSel.size > 0 && !divSel.has(project.division)) return;
+      const effDiv = getEffectiveDivision(project);
+      const effProd = getEffectiveProductLine(project);
+      if (divSel.size > 0 && !divSel.has(effDiv)) return;
       if (effSel.size > 0 && !effSel.has(project.effortType)) return;
       if (ptypeSel.size > 0 && !ptypeSel.has(project.projectType || 'task')) return;
-      if (prodSel.size > 0 && !prodSel.has(project.productLine)) return;
+      if (prodSel.size > 0 && !prodSel.has(effProd)) return;
       // When grouping is active, show all projects regardless of date; otherwise filter to view window
       if (groupLayers.length === 0 && !subtreeInWindow(project)) return;
     }
     if (searchMatches && !searchMatches.has(project.id)) return;
     result.push({ ...project, depth });
     if (!collapsed.has(project.id)) {
-      const children = sortProjects(getChildren(project.id));
+      const children = sortProjects(localGetChildren(project.id));
       children.forEach(child => addWithChildren(child, depth + 1));
     }
   }
 
-  const topLevel = sortProjects(projects.filter(p => !p.parentId));
+  const topLevel = sortProjects(projects.filter(p => !effectiveParentId(p)));
   topLevel.forEach(p => addWithChildren(p));
 
   // Multi-level grouping: inject header rows for each group layer
@@ -2597,11 +3119,12 @@ function getVisibleProjects(divisionOverride = null) {
     function getKey(p, layer) {
       if (layer === 'division') {
         const divLabels = { fuelcell:'Fuel Cell', electrolyzer:'Electrolyzer', exploration:'Exploration' };
-        const k = p.division || '';
+        const k = getEffectiveDivision(p);
         return { key: k, label: divLabels[k] || k || 'Unknown' };
       }
       if (layer === 'product') {
-        const prod = products.find(x => x.id === p.productLine);
+        const effProd = getEffectiveProductLine(p);
+        const prod = products.find(x => x.id === effProd);
         return { key: prod ? prod.id : '__none__', label: prod ? prod.name : 'No product' };
       }
       if (layer === 'type') {
@@ -2626,9 +3149,13 @@ function getVisibleProjects(divisionOverride = null) {
     result.filter(p => p.depth > 0).forEach(p => {
       const topParent = (() => {
         let cur = p;
-        while (cur.depth > 0) {
-          cur = result.find(x => x.id === cur.parentId) || cur;
-          if (cur.depth === 0) break;
+        const _visited = new Set();
+        while (cur.depth > 0 && !_visited.has(cur.id)) {
+          _visited.add(cur.id);
+          const parentId = effectiveParentId(cur);
+          const parent = result.find(x => x.id === parentId);
+          if (!parent || parent === cur) break;
+          cur = parent;
         }
         return cur;
       })();
@@ -2648,10 +3175,10 @@ function getVisibleProjects(divisionOverride = null) {
         else if (layer.key === 'end') { const d = (parseDate(a.end)   - parseDate(b.end))   * dir; if (d) return d; }
         else if (layer.key === 'name') { const c = a.name.localeCompare(b.name) * dir; if (c) return c; }
         else if (layer.key === 'progress') { const d = ((a.progress||0) - (b.progress||0)) * dir; if (d) return d; }
-        else if (layer.key === 'division') { const c = (a.division||'').localeCompare(b.division||'') * dir; if (c) return c; }
+        else if (layer.key === 'division') { const c = getEffectiveDivision(a).localeCompare(getEffectiveDivision(b)) * dir; if (c) return c; }
         else if (layer.key === 'product') {
-          const pa = (products.find(x=>x.id===a.productLine)||{}).name||'';
-          const pb = (products.find(x=>x.id===b.productLine)||{}).name||'';
+          const pa = (products.find(x=>x.id===getEffectiveProductLine(a))||{}).name||'';
+          const pb = (products.find(x=>x.id===getEffectiveProductLine(b))||{}).name||'';
           const c = pa.localeCompare(pb) * dir; if (c) return c;
         }
         else if (layer.key === 'type') { const c = (a.projectType||'task').localeCompare(b.projectType||'task') * dir; if (c) return c; }
@@ -2681,7 +3208,7 @@ function getVisibleProjects(divisionOverride = null) {
       final.push(p);
       // Children (preserve their relative order)
       const kids = result.filter(c => c.depth > 0 && (() => {
-        let cur = c; while(cur && cur.parentId) { if (cur.parentId === p.id) return true; cur = result.find(x=>x.id===cur.parentId); } return false;
+        let cur = c; const _v = new Set(); while(cur && !_v.has(cur.id)) { _v.add(cur.id); const pid = effectiveParentId(cur); if (pid === p.id) return true; cur = result.find(x=>x.id===pid); } return false;
       })());
       kids.forEach(k => final.push(k));
     });
@@ -2753,7 +3280,13 @@ function collapseAll() {
 }
 
 function expandAll() {
+  // Expand everything except objectives that have stage-gate children
+  const objsWithGates = new Set(
+    projects.filter(p => p.projectType === 'objective' && projects.some(c => c.isStageGate && c.parentId === p.id))
+      .map(p => p.id)
+  );
   collapsed.clear();
+  objsWithGates.forEach(id => collapsed.add(id));
   saveData();
   render();
 }
@@ -2889,7 +3422,7 @@ function renderStats() {
   const inProgress = inView.filter(p => p.progress > 0 && p.progress < 100).length;
   const overdue    = inView.filter(p => {
     const endDate = (p.milestone || p.projectType === 'delivery') ? parseDate(p.start) : parseDate(p.end);
-    return endDate < today && p.progress < 100 && !p.manuallyCompleted;
+    return endDate < today && !isComplete(p);
   }).length;
   const delayed    = inView.filter(p => (delays[p.id] || 0) > 0).length;
 
@@ -2952,9 +3485,12 @@ function renderStats() {
 }
 
 function recalcInitiativeProgress() {
+  const _effMap = _buildEffParentMap();
   // First pass: update objectives from their key results
   projects.forEach(p => {
     if (p.projectType === 'objective') {
+      // Don't override progress for manually completed objectives
+      if (p.manuallyCompleted) return;
       const krs = p.keyResults || [];
       if (krs.length > 0) {
         const avg = krs.reduce((s, kr) => {
@@ -2965,7 +3501,7 @@ function recalcInitiativeProgress() {
         }, 0) / krs.length;
         p.progress = Math.round(avg);
         // Sync completedDate: auto-set when KRs reach 100, clear when they drop below
-        if (!p.isStageGate && p.progress === 100 && !p.completedDate) {
+        if (p.progress === 100 && !p.completedDate) {
           p.completedDate = formatDate(today);
         } else if (p.progress < 100 && p.completedDate) {
           // don't auto-clear — user may have set it manually
@@ -2980,8 +3516,10 @@ function recalcInitiativeProgress() {
   function getDepth(id, memo = {}) {
     if (memo[id] !== undefined) return memo[id];
     const p = projects.find(x => x.id === id);
-    if (!p || !p.parentId) { memo[id] = 0; return 0; }
-    memo[id] = 1 + getDepth(p.parentId, memo);
+    if (!p) { memo[id] = 0; return 0; }
+    const pid = getEffectiveParentId(p, _effMap);
+    if (!pid) { memo[id] = 0; return 0; }
+    memo[id] = 1 + getDepth(pid, memo);
     return memo[id];
   }
 
@@ -2990,12 +3528,15 @@ function recalcInitiativeProgress() {
   initiatives.sort((a, b) => getDepth(b.id, memo) - getDepth(a.id, memo)); // deepest first
 
   initiatives.forEach(p => {
-    const children = projects.filter(c => c.parentId === p.id);
+    const children = getEffectiveChildren(p.id, _effMap);
     if (children.length > 0) {
       p.progress = Math.round(children.reduce((s, c) => s + (c.progress || 0), 0) / children.length);
     }
   });
 }
+
+/** Return a JS literal suitable for inline onclick — quotes strings, passes numbers raw */
+function _idArg(id) { return typeof id === 'string' ? `'${id}'` : id; }
 
 function render(divisionOverride = null) {
   // Roll up initiative progress from children before rendering
@@ -3006,6 +3547,7 @@ function render(divisionOverride = null) {
   
   // Calculate cascading delays
   const { adjusted, delays } = calculateAdjustedDates();
+  const _renderEffMap = _buildEffParentMap();
   
   // What-if mode banner
   let bannerHtml = '';
@@ -3087,33 +3629,41 @@ function render(divisionOverride = null) {
       const fontSize = depth === 0 ? '0.72rem' : '0.68rem';
       const isCollapsed = collapsedGroups.has(p.id);
       const chevron = `<span style="font-size:0.6rem;margin-right:6px;transition:transform 0.15s;display:inline-block;transform:rotate(${isCollapsed?'-90deg':'0deg'});">▼</span>`;
-      html += `<div class="gantt-group-header" style="padding-left:${0.75 + indent/16}rem;font-size:${fontSize};opacity:${depth===0?1:0.8};cursor:pointer;" onclick="toggleGroup('${p.id}',event)">${chevron}${dot}${p._groupKey}</div>`;
+      html += `<div class="gantt-group-header" style="padding-left:${0.75 + indent/16}rem;font-size:${fontSize};opacity:${depth===0?1:0.8};cursor:pointer;" onclick="toggleGroup(${_idArg(p.id)},event)">${chevron}${dot}${p._groupKey}</div>`;
       return;
     }
 
     const colors = getProjectColors(p);
-    const isParent = hasChildren(p.id);
+    const isParent = hasEffectiveChildren(p.id, _renderEffMap);
     const isSubproject = p.depth > 0;
     const delayDays = delays[p.id] || 0;
     const isLocked = p.locked;
+    const isTentative = !!p.tentative;
     const depthLevel = p.depth;
+    const isImported = !!p._imported;
+    const noEdit = IS_READONLY;
     
-    html += `<div class="gantt-row ${isSubproject ? 'subproject' : ''}" onclick="${IS_READONLY ? 'void(0)' : `openModal(${p.id})`}" style="position:relative;${IS_READONLY ? 'cursor:default;' : ''}">`;
+    html += `<div class="gantt-row ${isSubproject ? 'subproject' : ''} ${isImported ? 'imported-row' : ''} ${isTentative ? 'tentative-row' : ''}" onclick="${noEdit ? 'void(0)' : `openModal(${_idArg(p.id)})`}" style="position:relative;${noEdit ? 'cursor:default;' : ''}">`;
     const indent = Math.min(depthLevel, 4) * 14;
     html += `<div style="margin-left:${indent}px;display:flex;align-items:center;width:100%;min-width:0;">`;
-    if (isParent) {
+    // Show expand only if there are expandable children
+    // Objectives always get the button when they have children (including stage-gates) — toggle controls inline gate circles
+    const hasExpandableChildren = isParent && (
+      (p.projectType === 'objective') || getEffectiveChildren(p.id, _renderEffMap).some(c => !c.isStageGate)
+    );
+    if (hasExpandableChildren) {
       const icon = collapsed.has(p.id) ? '▶' : '▼';
-      html += `<button class="expand-btn" onclick="toggleCollapse(${p.id}, event)">${icon}</button>`;
+      html += `<button class="expand-btn" onclick="toggleCollapse(${_idArg(p.id)}, event)">${icon}</button>`;
     } else {
       html += '<div style="width:24px;flex-shrink:0;"></div>';
     }
     // Quick-complete button (skip milestones, initiatives, objectives — they derive progress)
     const ptype = p.projectType || 'task';
-    const canQuickComplete = !isParent && (!IS_READONLY || p.isStageGate);
+    const canQuickComplete = !isParent && !isImported && (!IS_READONLY || p.isStageGate);
     if (canQuickComplete) {
       const isDone = isComplete(p);
       const sgClass = p.isStageGate ? ' sg-quick-complete' : '';
-      html += `<button class="quick-complete-btn${sgClass} ${isDone ? 'done' : ''}" title="${isDone ? 'Mark incomplete' : 'Mark complete'}" onclick="quickComplete(${p.id}, event)">✓</button>`;
+      html += `<button class="quick-complete-btn${sgClass} ${isDone ? 'done' : ''}" title="${isDone ? 'Mark incomplete' : 'Mark complete'}" onclick="quickComplete(${_idArg(p.id)}, event)">✓</button>`;
     } else {
       html += '<div style="width:21px;flex-shrink:0;"></div>';
     }
@@ -3163,6 +3713,8 @@ function render(divisionOverride = null) {
     html += `<div class="project-name ${isParent ? 'parent' : ''} ${isOverdue ? 'overdue' : ''}">`;
     html += `<span class="project-name-text">${displayName}</span>`;
     if (isLocked) html += `<span class="locked-indicator" style="flex-shrink:0;">🔒</span>`;
+    if (isTentative) html += `<span class="tentative-indicator" title="Tentative — not yet committed">?</span>`;
+    if (isImported) html += `<span class="import-badge" title="From ${p._importLabel} Gantt">${p._importLabel === 'Fuel Cell' ? 'FC' : 'EL'}</span>`;
     if (delayDays > 0) html += `<span class="delay-indicator" style="flex-shrink:0;">+${delayDays}d</span>`;
     // MS badge: use p.milestone (same condition as timeline diamond) — not p.projectType
     // INIT/OBJ badges: use ptype (already computed)
@@ -3211,8 +3763,29 @@ function render(divisionOverride = null) {
       }
     }
     if (isParent && p.projectType !== 'objective') {
-      const childCount = getChildren(p.id).length;
+      const childCount = getEffectiveChildren(p.id, _renderEffMap).length;
       metaParts.push(`${childCount} sub-item${childCount !== 1 ? 's' : ''}`);
+    }
+    // Linked external projects info
+    if (!p._imported) {
+      const linked = importAssociations[p.id];
+      if (linked && linked.length) metaParts.push(`<span style="color:var(--accent);">🔗 ${linked.length} external</span>`);
+    } else {
+      // Show product association for imported projects
+      const prodAssoc = importProductAssoc[p.id];
+      if (prodAssoc && prodAssoc.productLine) {
+        const prod = products.find(pr => pr.id === prodAssoc.productLine);
+        if (prod) {
+          let prodLabel = prod.name;
+          if (prodAssoc.productModel) {
+            const model = prod.models && prod.models.find(m => m.id === prodAssoc.productModel);
+            if (model) prodLabel += ` (${model.name})`;
+          }
+          metaParts.push(prodLabel);
+        }
+      }
+      const localLinks = getLocalAssocForImported(p.id);
+      if (localLinks.length) metaParts.push(`<span style="color:var(--accent);">🔗 ${localLinks.map(l => l.name).join(', ')}</span>`);
     }
     if (metaParts.length > 0) html += `<div class="project-meta">${metaParts.join(' · ')}</div>`;
     // Progress mini-bar in label column (skip pure parent-bar projects that derive from children)
@@ -3231,9 +3804,9 @@ function render(divisionOverride = null) {
       const badgeLabel = ptype === 'delivery' ? 'DEL' : (p.milestone ? 'MS' : (ptype === 'initiative' ? 'INIT' : 'OBJ'));
       html += `<span class="ptype-badge ${badgeType}" style="position:absolute;right:30px;top:50%;transform:translateY(-50%);pointer-events:none;">${badgeLabel}</span>`;
     }
-    // Add sub-project button (not for milestones or stage-gates)
-    if (!p.milestone && !p.isStageGate) {
-      html += `<button class="add-subproject-btn" title="Add sub-project" onclick="openModalAsChild(${p.id}, event)">+</button>`;
+    // Add sub-project button (not for milestones, stage-gates, or imported rows)
+    if (!p.milestone && !p.isStageGate && !isImported) {
+      html += `<button class="add-subproject-btn" title="Add sub-project" onclick="openModalAsChild(${_idArg(p.id)}, event)">+</button>`;
     }
     html += `</div></div></div>`;
   });
@@ -3323,7 +3896,7 @@ function render(divisionOverride = null) {
   visible.forEach((p, rowIndex) => {
     // Group header — render matching empty row in timeline
     if (p._isGroupHeader) {
-      html += `<div class="group-header-row" style="width:${totalWidth}px;cursor:pointer;" onclick="toggleGroup('${p.id}',event)">${p._groupKey}</div>`;
+      html += `<div class="group-header-row" style="width:${totalWidth}px;cursor:pointer;" onclick="toggleGroup(${_idArg(p.id)},event)">${p._groupKey}</div>`;
       pixelOffset += 30; // group header height
       return;
     }
@@ -3332,6 +3905,7 @@ function render(divisionOverride = null) {
     const adj = adjusted[p.id];
     const delayDays = delays[p.id] || 0;
     const isDelayed = delayDays > 0;
+    const isTentative = !!p.tentative;
     
     html += `<div class="timeline-row ${isSubproject ? 'subproject' : ''}" data-id="${p.id}">`;
     
@@ -3353,7 +3927,7 @@ function render(divisionOverride = null) {
     const leftPx  = ((pStart - timelineStart) / totalDuration) * totalWidth;
     const widthPx = Math.max(((pEnd - pStart) / totalDuration) * totalWidth, 4);
     const colors = getProjectColors(p);
-    const isParent = hasChildren(p.id);
+    const isParent = hasEffectiveChildren(p.id, _renderEffMap);
 
     // Store unclamped positions for dependency arrows (they may link to off-screen bars)
     
@@ -3370,7 +3944,8 @@ function render(divisionOverride = null) {
       const msStyle = isDelivery
         ? `left:${leftPx - 6}px;background:#111;border:2px solid ${colors.bar};box-sizing:border-box;`
         : `left:${leftPx - 6}px;background:${colors.bar};`;
-      html += `<div class="milestone" style="${msStyle}" onclick="openModal(${p.id});event.stopPropagation();">`;
+      const msTentative = isTentative ? 'opacity:0.5;background:transparent;border:2px dashed ' + colors.bar + ';box-sizing:border-box;' : '';
+      html += `<div class="milestone" style="${msStyle}${msTentative}" onclick="openModal(${_idArg(p.id)});event.stopPropagation();">`;
       if (isDelayed) html += `<div class="delay-badge">+${delayDays}d</div>`;
       html += `</div>`;
       if (isDelayed) {
@@ -3392,7 +3967,7 @@ function render(divisionOverride = null) {
       let barClass, barStyle;
       if (ptype === 'objective') {
         barClass = 'project-bar';
-        barStyle = `left:${leftPx}px;width:${widthPx}px;background:${colors.bg};border:2px solid ${colors.bar};height:22px;border-radius:5px;overflow:hidden;`;
+        barStyle = `left:${leftPx}px;width:${widthPx}px;background:${colors.bg};border:2px solid ${colors.bar};height:22px;border-radius:5px;position:relative;`;
       } else if (ptype === 'initiative') {
         barClass = 'project-bar';
         barStyle = `left:${leftPx}px;width:${widthPx}px;background:${colors.bg};border:2px solid ${colors.bar};height:18px;border-radius:9px 3px 3px 9px;overflow:hidden;`;
@@ -3408,7 +3983,8 @@ function render(divisionOverride = null) {
         barClass = 'project-bar';
         barStyle = `left:${leftPx}px;width:${widthPx}px;background:${colors.bg};border:1px solid ${colors.bar}`;
       }
-      html += `<div class="${barClass}" style="${barStyle}" onclick="openModal(${p.id});event.stopPropagation();">`;
+      if (isTentative) barStyle += ';border-style:dashed;opacity:0.5;background:transparent';
+      html += `<div class="${barClass}" style="${barStyle}" onclick="openModal(${_idArg(p.id)});event.stopPropagation();">`;
       // Progress fill
       if (p.progress > 0 && !isParent || ptype === 'objective' || ptype === 'initiative') {
         if (p.progress > 0) {
@@ -3416,12 +3992,32 @@ function render(divisionOverride = null) {
         }
       }
       // Completed: checkmark badge on bar
-      if (isComplete(p) && !isParent && ptype !== 'milestone' && ptype !== 'checklist') {
-        html += `<span style="position:absolute;right:4px;top:50%;transform:translateY(-50%);font-size:0.6rem;color:${colors.bar};pointer-events:none;font-weight:700;">✓</span>`;
+      if (isComplete(p) && ptype !== 'milestone' && ptype !== 'checklist') {
+        // For objectives/initiatives: position left to not overlap the % label
+        const checkPos = (ptype === 'objective' || ptype === 'initiative') ? 'left:4px;' : 'right:4px;';
+        html += `<span style="position:absolute;${checkPos}top:50%;transform:translateY(-50%);font-size:0.6rem;color:${colors.bar};pointer-events:none;font-weight:700;">✓</span>`;
       }
       // Progress % label on bars wide enough (>50px) for objective/initiative
-      if ((ptype === 'objective' || ptype === 'initiative') && widthPx > 50 && p.progress > 0 && p.progress < 100) {
+      if ((ptype === 'objective' || ptype === 'initiative') && widthPx > 50 && p.progress > 0) {
         html += `<span style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);font-size:0.6rem;font-weight:700;color:${colors.bar};pointer-events:none;white-space:nowrap;">${p.progress}%</span>`;
+      }
+      // Stage-gate inline circles on objective bar (shown when collapsed)
+      if (ptype === 'objective' && collapsed.has(p.id)) {
+        const gates = projects.filter(sg => sg.isStageGate && sg.parentId === p.id)
+          .sort((a, b) => parseDate(a.start) - parseDate(b.start));
+        if (gates.length > 0) {
+          const gateCircles = gates.map((sg, gi) => {
+            const passed = isComplete(sg);
+            const due = parseDate(sg.end) <= today;
+            const bgColor = passed ? '#1D9E75' : due ? '#E24B4A' : 'var(--bg-tertiary)';
+            const borderColor = passed ? '#1D9E75' : due ? '#E24B4A' : 'var(--border)';
+            const label = `Gate ${gi+1}: ${sg.name} — ${passed ? 'passed' : due ? 'overdue' : 'pending'}`;
+            return `<div title="${label}" style="width:12px;height:12px;border-radius:50%;background:${bgColor};border:1.5px solid ${borderColor};flex-shrink:0;display:flex;align-items:center;justify-content:center;">`
+              + (passed ? '<span style="color:white;font-size:0.45rem;font-weight:700;">✓</span>' : `<span style="color:${due?'white':'var(--text-tertiary)'};font-size:0.45rem;font-weight:700;">${gi+1}</span>`)
+              + '</div>';
+          }).join('<div style="width:4px;height:1.5px;background:var(--border);flex-shrink:0;"></div>');
+          html += `<div style="position:absolute;right:4px;top:50%;transform:translateY(-50%);display:flex;align-items:center;gap:0;pointer-events:none;z-index:2;">${gateCircles}</div>`;
+        }
       }
       if (isDelayed) html += `<div class="delay-badge" style="${isParent ? 'top:-8px;' : ''}">+${delayDays}d</div>`;
       html += '</div>';
@@ -3500,7 +4096,9 @@ function render(divisionOverride = null) {
     // walk up ancestors until we find one that IS in projectPositions.
     function resolvePos(id) {
       let cur = id;
-      while (cur != null) {
+      const _v = new Set();
+      while (cur != null && !_v.has(cur)) {
+        _v.add(cur);
         if (projectPositions[cur]) return { pos: projectPositions[cur], resolvedId: cur };
         const p = projects.find(x => x.id === cur);
         cur = p ? p.parentId : null;
@@ -3521,18 +4119,18 @@ function render(divisionOverride = null) {
 
       p.dependencies.forEach(dep => {
         const depEntry = typeof dep === 'object' ? dep : { id: dep, type: 'blocking', leadDays: 0 };
+        if (depEntry.hidden) return; // tracker-managed sequential deps: cascade without arrow
+        // Hide arrows between sequential stage-gates under the same parent objective
+        if (p.isStageGate && p.parentId) {
+          const depProj = projects.find(x => x.id === depEntry.id);
+          if (depProj && depProj.isStageGate && depProj.parentId === p.parentId) return;
+        }
         const fromResolved = resolvePos(depEntry.id);
         if (!fromResolved) return;
         const fromPos = fromResolved.pos;
 
         // Skip self-loops (both resolved to same visible ancestor)
         if (fromResolved.resolvedId === toResolved.resolvedId) return;
-
-        // Skip arrows between sequential stage-gates of the SAME objective —
-        // the Gantt bar order already conveys the sequence visually.
-        // Cross-objective stage-gate deps DO get arrows.
-        const depProj = projects.find(x => x.id === depEntry.id);
-        if (p.isStageGate && depProj && depProj.isStageGate && p.parentId === depProj.parentId) return;
 
         const isSyn = depEntry.type === 'synergistic';
         const stroke = isSyn ? '#059669' : '#888780';
@@ -3627,7 +4225,7 @@ function render(divisionOverride = null) {
     if (ghostLeft + ghostWidth < 0) return; // fully off-screen left
 
     const depPtype = p.projectType || 'task';
-    const depIsParent = hasChildren(p.id);
+    const depIsParent = hasEffectiveChildren(p.id, _renderEffMap);
     const daysSaved = Math.round((currentStartTime - possibleStartTime) / 86400000);
     let ghostBarHtml;
     if (p.milestone) {
@@ -4044,20 +4642,60 @@ function renderActivePanel() {
     if (expectedPct > 0) score -= Math.max(0, expectedPct - actualPct) * 0.6;
     if (delayDays > 0)   score -= Math.min(30, delayDays * 1.5);
     if (isOverdue)       score -= 20;
+
+    // Stage-gate health penalty (mirrors Q Tracker computeStageGateHealth logic)
+    if (p.projectType === 'objective') {
+      const gates = projects.filter(sg => sg.isStageGate && sg.parentId === p.id)
+        .sort((a, b) => parseDate(a.end) - parseDate(b.end));
+      if (gates.length > 0) {
+        const todayStr = formatDate(today);
+        // Find current gate (earliest unfinished) and previous gate
+        let currentIdx = gates.findIndex(g => !isComplete(g));
+        if (currentIdx < 0) currentIdx = gates.length - 1; // all done → last gate is "current"
+        const current = gates[currentIdx];
+        const previous = currentIdx > 0 ? gates[currentIdx - 1] : null;
+
+        // Count overdue gates
+        const overdueGates = gates.filter(g => !isComplete(g) && parseDate(g.end) <= today).length;
+        const lateGates = gates.filter(g => isComplete(g) && g.completedDate && g.end && parseDate(g.completedDate) > parseDate(g.end)).length;
+
+        // Rule: multiple overdue gates → heavy penalty
+        if (overdueGates >= 2) score -= 35;
+        else if (overdueGates === 1) score -= 20;
+
+        // Rule: current gate overdue → penalty based on days overdue
+        if (!isComplete(current) && current.end && todayStr > current.end) {
+          const gateOverdueDays = Math.ceil((today - parseDate(current.end)) / 86400000);
+          score -= Math.min(25, gateOverdueDays * 2);
+        }
+
+        // Rule: previous gate passed late → moderate penalty
+        if (previous && isComplete(previous) && previous.completedDate && previous.end &&
+            parseDate(previous.completedDate) > parseDate(previous.end)) {
+          score -= 10;
+        }
+
+        // Rule: gates completed late accumulate
+        if (lateGates > 1) score -= lateGates * 5;
+      }
+    }
+
     score = Math.round(Math.max(0, Math.min(100, score)));
     return { score, expectedPct: Math.round(expectedPct), delayDays, isOverdue };
   }
 
-  function healthLabel(score) { return score >= 70 ? 'On track' : score >= 40 ? 'At risk' : 'Off track'; }
-  function healthColor(score) { return score >= 70 ? '#1D9E75' : score >= 40 ? '#BA7517' : '#E24B4A'; }
+  function healthLabel(score) { return score >= 70 ? 'On track' : score >= 40 ? 'Watch closely' : 'At risk'; }
+  function healthColor(score) { return score >= 70 ? '#639922' : score >= 40 ? '#BA7517' : '#E24B4A'; }
 
   function statusBadge(score) {
     const c = healthColor(score), l = healthLabel(score);
-    return `<span style="font-size:0.63rem;font-weight:700;padding:2px 7px;border-radius:10px;background:${c}20;color:${c};flex-shrink:0;">${l}</span>`;
+    const bg = score >= 70 ? '#EAF3DE' : score >= 40 ? '#FAEEDA' : '#FCEBEB';
+    const fg = score >= 70 ? '#3B6D11' : score >= 40 ? '#854F0B' : '#A32D2D';
+    return `<span style="font-size:0.63rem;font-weight:700;padding:2px 7px;border-radius:10px;background:${bg};color:${fg};flex-shrink:0;">${l}</span>`;
   }
 
   function delayBadge(d) {
-    return d > 0 ? `<span style="font-size:0.63rem;font-weight:700;color:#E24B4A;background:#FEE2E2;padding:2px 6px;border-radius:10px;flex-shrink:0;">+${d}d</span>` : '';
+    return d > 0 ? `<span style="font-size:0.63rem;font-weight:700;color:#A32D2D;background:#FCEBEB;padding:2px 6px;border-radius:10px;flex-shrink:0;">+${d}d</span>` : '';
   }
 
   function progressBar(pct, expPct, color) {
@@ -4089,22 +4727,22 @@ function renderActivePanel() {
   }
 
   // ── Active project lists ──────────────────────────────────────────────────────
-  // Current quarter bounds
   const qStart = new Date(today.getFullYear(), Math.floor(today.getMonth() / 3) * 3, 1);
   const qEnd   = new Date(today.getFullYear(), Math.floor(today.getMonth() / 3) * 3 + 3, 0);
 
   const isActive = p => {
     if (p.isStageGate) return false;
+    if (p.tentative) return false;
     if (isComplete(p)) return false;
-    if (divFilter !== 'all' && p.division !== divFilter) return false;
+    if (divFilter !== 'all' && getEffectiveDivision(p) !== divFilter) return false;
     const pStart = parseDate((adjusted[p.id] || {}).originalStart || p.start);
     return pStart <= today;
   };
 
   const isMsDue = p => {
-    // Also include milestones/deliveries due within the current quarter (even if not yet started)
     if (isComplete(p)) return false;
-    if (divFilter !== 'all' && p.division !== divFilter) return false;
+    if (p.tentative) return false;
+    if (divFilter !== 'all' && getEffectiveDivision(p) !== divFilter) return false;
     const pEnd = parseDate((adjusted[p.id] || {}).originalEnd || p.end);
     return pEnd >= qStart && pEnd <= qEnd;
   };
@@ -4112,26 +4750,44 @@ function renderActivePanel() {
   const activeMilestones = projects.filter(p => (p.milestone || p.projectType === 'delivery') && (isActive(p) || isMsDue(p)));
   const activeObjectives  = projects.filter(p => p.projectType === 'objective' && isActive(p));
 
-  // Summary
-  const allActive = [...activeMilestones, ...activeObjectives];
+  // Type filter
+  const typeFilter = document.getElementById('activeTypeFilter')?.value || 'both';
+  const typedMs  = typeFilter === 'objectives' ? [] : activeMilestones;
+  const typedObj = typeFilter === 'milestones' ? [] : activeObjectives;
+
+  // Status filter
+  const statusFilter = document.getElementById('activeStatusFilter')?.value || 'all';
+  function passesStatusFilter(p) {
+    if (statusFilter === 'all') return true;
+    const s = getHealth(p).score;
+    if (statusFilter === 'ontrack') return s >= 70;
+    if (statusFilter === 'watch') return s >= 40 && s < 70;
+    if (statusFilter === 'atrisk') return s < 40;
+    return true;
+  }
+  const filteredMs  = typedMs.filter(passesStatusFilter);
+  const filteredObj = typedObj.filter(passesStatusFilter);
+
+  // Summary (computed from unfiltered type list for context)
+  const allActive = [...typedMs, ...typedObj];
   const allHealth = allActive.map(p => getHealth(p).score);
   const total    = allActive.length;
   const onTrack  = allHealth.filter(s => s >= 70).length;
-  const atRisk   = allHealth.filter(s => s >= 40 && s < 70).length;
-  const offTrack = allHealth.filter(s => s < 40).length;
+  const watchClosely = allHealth.filter(s => s >= 40 && s < 70).length;
+  const atRisk   = allHealth.filter(s => s < 40).length;
   const delayed  = allActive.filter(p => (delays[p.id]||0) > 0).length;
   if (summary) {
     summary.innerHTML = [
       `<span class="summary-chip"><strong>${total}</strong> active</span>`,
-      onTrack  ? `<span class="summary-chip good"><strong>${onTrack}</strong> on track</span>` : '',
-      atRisk   ? `<span class="summary-chip warn"><strong>${atRisk}</strong> at risk</span>` : '',
-      offTrack ? `<span class="summary-chip warn"><strong>${offTrack}</strong> off track</span>` : '',
-      delayed  ? `<span class="summary-chip warn"><strong>${delayed}</strong> delayed</span>` : '',
+      onTrack      ? `<span class="summary-chip good"><strong>${onTrack}</strong> on track</span>` : '',
+      watchClosely ? `<span class="summary-chip warn"><strong>${watchClosely}</strong> watch closely</span>` : '',
+      atRisk       ? `<span class="summary-chip warn"><strong>${atRisk}</strong> at risk</span>` : '',
+      delayed      ? `<span class="summary-chip warn"><strong>${delayed}</strong> delayed</span>` : '',
     ].join('');
   }
 
-  if (total === 0) {
-    grid.innerHTML = '<div class="empty-state">No active milestones or objectives.</div>';
+  if (filteredMs.length === 0 && filteredObj.length === 0) {
+    grid.innerHTML = '<div class="empty-state">No active milestones or objectives matching filters.</div>';
     return;
   }
 
@@ -4142,7 +4798,6 @@ function renderActivePanel() {
     const pct    = p.progress || 0;
     const adj    = adjusted[p.id] || {};
 
-    // KPI targets table
     const kpis = (p.milestoneKpis || p.kpis || []).filter(k => k.name);
     const kpiTableStyle = 'display:grid;grid-template-columns:14px 1fr auto auto;gap:2px 8px;font-size:0.67rem;align-items:center;margin-bottom:6px;';
     const kpiHeaderStyle = 'color:var(--text-tertiary);font-weight:600;font-size:0.6rem;text-transform:uppercase;letter-spacing:0.04em;padding-bottom:2px;border-bottom:1px solid var(--border-light);';
@@ -4154,7 +4809,7 @@ function renderActivePanel() {
       const rows = kpis.map(k => {
         const cur = k.current ?? 0, tgt = parseFloat(k.target) || 0;
         const pctK = tgt > 0 ? Math.min(100, Math.round((cur / tgt) * 100)) : (cur >= tgt ? 100 : 0);
-        const kColor = pctK >= 100 ? '#1D9E75' : pctK >= 60 ? '#BA7517' : '#E24B4A';
+        const kColor = pctK >= 100 ? '#3B6D11' : pctK >= 60 ? '#854F0B' : '#A32D2D';
         const unit = k.unit ? ' ' + k.unit : '';
         const dirArrow = k.direction === 'decrease' ? '↓' : k.direction === 'maintain' ? '=' : '↑';
         return `<div style="display:flex;align-items:center;justify-content:center;"><div style="width:7px;height:7px;border-radius:50%;background:${kColor};flex-shrink:0;"></div></div>
@@ -4171,7 +4826,7 @@ function renderActivePanel() {
     const daysStr  = daysLeft < 0 ? `${Math.abs(daysLeft)}d overdue` : daysLeft === 0 ? 'Due today' : `${daysLeft}d left`;
     const daysCol  = daysLeft < 0 ? '#E24B4A' : daysLeft <= 7 ? '#BA7517' : 'var(--text-tertiary)';
 
-    return `<div onclick="openModal(${p.id})" style="min-width:220px;max-width:280px;flex-shrink:0;background:var(--bg-primary);border:1px solid var(--border);border-radius:10px;overflow:hidden;cursor:pointer;transition:box-shadow 0.15s;" onmouseover="this.style.boxShadow='0 2px 12px rgba(0,0,0,0.08)'" onmouseout="this.style.boxShadow=''">
+    return `<div onclick="openModal(${_idArg(p.id)})" style="min-width:220px;max-width:280px;flex-shrink:0;background:var(--bg-primary);border:1px solid var(--border);border-radius:10px;overflow:hidden;cursor:pointer;transition:box-shadow 0.15s;" onmouseover="this.style.boxShadow='0 2px 12px rgba(0,0,0,0.08)'" onmouseout="this.style.boxShadow=''">
       <div style="height:3px;background:${colors.bar};"></div>
       <div style="padding:0.75rem 0.875rem;">
         <div style="display:flex;align-items:flex-start;gap:6px;margin-bottom:6px;">
@@ -4209,7 +4864,6 @@ function renderActivePanel() {
     const pct    = p.progress || 0;
     const adj    = adjusted[p.id] || {};
 
-    // Key results table
     const krs = (p.keyResults || []);
     const krTableStyle = 'display:grid;grid-template-columns:14px 1fr auto auto;gap:2px 8px;font-size:0.67rem;align-items:center;margin-bottom:6px;';
     const krHeaderStyle = 'color:var(--text-tertiary);font-weight:600;font-size:0.6rem;text-transform:uppercase;letter-spacing:0.04em;padding-bottom:2px;border-bottom:1px solid var(--border-light);';
@@ -4223,7 +4877,6 @@ function renderActivePanel() {
         let goalStr = '100%', curStr = '';
         if (kr.trackingType === 'kpi') {
           krPct = calculateKpiProgress(kr.kpis || []);
-          // Surface first KPI values if available
           const firstKpi = (kr.kpis || [])[0];
           if (firstKpi) {
             const unit = firstKpi.unit ? ' ' + firstKpi.unit : '';
@@ -4241,7 +4894,7 @@ function renderActivePanel() {
           goalStr = '<span style="opacity:0.55;margin-right:2px;">↑</span>100%'; curStr = `${Math.round(krPct)}%`;
         }
         if (!curStr) curStr = `${Math.round(krPct)}%`;
-        const kColor = krPct >= 100 ? '#1D9E75' : krPct >= 60 ? '#BA7517' : '#E24B4A';
+        const kColor = krPct >= 100 ? '#3B6D11' : krPct >= 60 ? '#854F0B' : '#A32D2D';
         return `<div style="display:flex;align-items:center;justify-content:center;"><div style="width:7px;height:7px;border-radius:50%;background:${kColor};flex-shrink:0;"></div></div>
           <span style="color:var(--text-secondary);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${kr.name||''}">${kr.name||'KR'}</span>
           <span style="color:var(--text-tertiary);text-align:right;white-space:nowrap;">${goalStr}</span>
@@ -4269,14 +4922,24 @@ function renderActivePanel() {
     const gateDots = gates.map((sg, gi) => {
       const passed = isComplete(sg);
       const due    = parseDate(sg.end) <= today;
-      const color  = passed ? '#1D9E75' : due ? '#E24B4A' : 'var(--border)';
+      const inProgress = !passed && (sg.progress > 0);
+      // Passed late: completed but after due date
+      const passedLate = passed && sg.completedDate && sg.end && parseDate(sg.completedDate) > parseDate(sg.end);
+      // 5 states: passed on time, passed late, overdue, active, pending
+      let dotBg, dotBorder, dotTextColor, statusWord;
+      if (passed && passedLate) { dotBg = '#FAEEDA'; dotBorder = '#854F0B'; dotTextColor = '#854F0B'; statusWord = 'passed late'; }
+      else if (passed)          { dotBg = '#EAF3DE'; dotBorder = '#3B6D11'; dotTextColor = '#3B6D11'; statusWord = 'passed'; }
+      else if (due)             { dotBg = '#FCEBEB'; dotBorder = '#A32D2D'; dotTextColor = '#A32D2D'; statusWord = 'overdue'; }
+      else if (inProgress)      { dotBg = '#E6F1FB'; dotBorder = '#0C447C'; dotTextColor = '#0C447C'; statusWord = 'in progress'; }
+      else                      { dotBg = '#f0f0ee'; dotBorder = '#ccc';    dotTextColor = '#555';    statusWord = 'pending'; }
+
       const baseline = sg.baselineEndDate || sg.baselineDate;
       let deltaStr = '';
       if (baseline && sg.end && baseline !== sg.end) {
         const d = Math.round((parseDate(sg.end) - parseDate(baseline)) / 86400000);
         deltaStr = d > 0 ? ` (+${d}d)` : ` (${d}d)`;
       }
-      const tooltip = `Gate ${gi+1}: ${sg.name}${deltaStr} — ${passed?'passed':due?'overdue':'pending'} (due ${sg.end})`;
+      const tooltip = `Gate ${gi+1}: ${sg.name}${deltaStr} — ${statusWord} (due ${sg.end})`;
 
       // Cross-objective blocker bubbles
       const crossDeps = (sg.dependencies || []).filter(d => {
@@ -4289,13 +4952,14 @@ function renderActivePanel() {
         const depSg  = projects.find(x => x.id === depId);
         const depObj = depSg ? projects.find(x => x.id === depSg.parentId) : null;
         const depDone = depSg && isComplete(depSg);
-        const bColor  = depDone ? '#1D9E75' : '#E24B4A';
-        const bLabel  = `${depSg ? depSg.name : 'Gate'} (${depObj ? depObj.name : 'Other'})`;
-        return `<span title="Blocked by: ${bLabel}" style="font-size:0.58rem;padding:1px 5px;border-radius:8px;background:${bColor}18;border:1px solid ${bColor}40;color:${bColor};white-space:nowrap;">⊘ ${depSg ? depSg.name : 'Gate'}</span>`;
+        const bBg    = depDone ? '#EAF3DE' : '#FCEBEB';
+        const bColor = depDone ? '#3B6D11' : '#A32D2D';
+        const bLabel = `${depSg ? depSg.name : 'Gate'} (${depObj ? depObj.name : 'Other'})`;
+        return `<span title="Blocked by: ${bLabel}" style="font-size:0.58rem;padding:1px 5px;border-radius:8px;background:${bBg};border:1px solid ${bColor}40;color:${bColor};white-space:nowrap;">⊘ ${depSg ? depSg.name : 'Gate'}</span>`;
       }).join('');
 
-      const dot = `<div title="${tooltip}" style="width:14px;height:14px;border-radius:50%;background:${color};border:2px solid ${passed?'#1D9E75':due?'#E24B4A':'var(--border)'};flex-shrink:0;display:flex;align-items:center;justify-content:center;">
-        ${passed ? '<span style="color:white;font-size:0.5rem;font-weight:700;">✓</span>' : `<span style="color:${due?'#E24B4A':'var(--text-tertiary)'};font-size:0.55rem;font-weight:700;">${gi+1}</span>`}
+      const dot = `<div title="${tooltip}" style="width:14px;height:14px;border-radius:50%;background:${dotBg};border:2px solid ${dotBorder};flex-shrink:0;display:flex;align-items:center;justify-content:center;">
+        ${passed ? `<span style="color:${dotTextColor};font-size:0.5rem;font-weight:700;">✓</span>` : `<span style="color:${dotTextColor};font-size:0.55rem;font-weight:700;">${gi+1}</span>`}
       </div>`;
 
       return blockers ? `<div style="display:flex;flex-direction:column;align-items:center;gap:3px;">${dot}<div style="display:flex;flex-wrap:wrap;gap:2px;justify-content:center;">${blockers}</div></div>` : dot;
@@ -4306,7 +4970,7 @@ function renderActivePanel() {
       <div style="margin-top:6px;padding-top:6px;border-top:1px solid var(--border-light);">
         <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:5px;">
           <span style="font-size:0.62rem;font-weight:700;text-transform:uppercase;letter-spacing:0.04em;color:var(--text-tertiary);">Gates ${gatesPassed}/${gates.length}</span>
-          ${gatesBehind > 0 ? `<span style="font-size:0.62rem;font-weight:700;color:#E24B4A;background:#FEE2E2;padding:1px 5px;border-radius:8px;">⚑ ${gatesBehind} behind</span>` : ''}
+          ${gatesBehind > 0 ? `<span style="font-size:0.62rem;font-weight:700;color:#A32D2D;background:#FCEBEB;padding:1px 5px;border-radius:8px;">⚑ ${gatesBehind} behind</span>` : ''}
         </div>
         <div style="display:flex;align-items:flex-start;gap:0;">${gateDots.join(connector)}</div>
       </div>` : '';
@@ -4316,7 +4980,7 @@ function renderActivePanel() {
     const daysStr  = daysLeft < 0 ? `${Math.abs(daysLeft)}d overdue` : daysLeft === 0 ? 'Due today' : `${daysLeft}d left`;
     const daysCol  = daysLeft < 0 ? '#E24B4A' : daysLeft <= 7 ? '#BA7517' : 'var(--text-tertiary)';
 
-    return `<div onclick="openModal(${p.id})" style="min-width:250px;max-width:320px;flex-shrink:0;background:var(--bg-primary);border:1px solid var(--border);border-radius:10px;overflow:hidden;cursor:pointer;transition:box-shadow 0.15s;" onmouseover="this.style.boxShadow='0 2px 12px rgba(0,0,0,0.08)'" onmouseout="this.style.boxShadow=''">
+    return `<div onclick="openModal(${_idArg(p.id)})" style="min-width:250px;max-width:320px;flex-shrink:0;background:var(--bg-primary);border:1px solid var(--border);border-radius:10px;overflow:hidden;cursor:pointer;transition:box-shadow 0.15s;" onmouseover="this.style.boxShadow='0 2px 12px rgba(0,0,0,0.08)'" onmouseout="this.style.boxShadow=''">
       <div style="height:3px;background:${colors.bar};"></div>
       <div style="padding:0.75rem 0.875rem;">
         <div style="display:flex;align-items:flex-start;gap:6px;margin-bottom:6px;">
@@ -4350,19 +5014,17 @@ function renderActivePanel() {
   const divLabels = { fuelcell:'Fuel Cell', electrolyzer:'Electrolyzer', exploration:'Exploration' };
   const divColors = { fuelcell:'#534AB7', electrolyzer:'#1D9E75', exploration:'#378ADD' };
 
-  // All products relevant to this filter, plus a sentinel for "no product"
   const activeDivisions = divOrder.filter(d => divFilter === 'all' || d === divFilter);
 
   let html = '';
 
   activeDivisions.forEach(div => {
-    const divMs  = activeMilestones.filter(p => p.division === div);
-    const divObj = activeObjectives.filter(p => p.division === div);
+    const divMs  = filteredMs.filter(p => getEffectiveDivision(p) === div);
+    const divObj = filteredObj.filter(p => getEffectiveDivision(p) === div);
     if (!divMs.length && !divObj.length) return;
 
     // Get product lines represented in this division's active items
-    const prodIds = [...new Set([...divMs, ...divObj].map(p => p.productLine || ''))];
-    // Sort: named products first (by name), then blank last
+    const prodIds = [...new Set([...divMs, ...divObj].map(p => getEffectiveProductLine(p) || ''))];
     prodIds.sort((a, b) => {
       if (!a && b) return 1; if (a && !b) return -1;
       const pa = (products.find(x => x.id === a)||{}).name || '';
@@ -4380,10 +5042,10 @@ function renderActivePanel() {
     prodIds.forEach(prodId => {
       const prod = prodId ? products.find(x => x.id === prodId) : null;
       const prodLabel = prod ? prod.name : 'No product';
-      const ms  = divMs.filter(p => (p.productLine || '') === prodId)
-        .sort((a, b) => parseDate(a.start) - parseDate(b.start)); // chronological by original plan
-      const obj = divObj.filter(p => (p.productLine || '') === prodId)
-        .sort((a, b) => getHealth(a).score - getHealth(b).score); // worst health first
+      const ms  = divMs.filter(p => (getEffectiveProductLine(p) || '') === prodId)
+        .sort((a, b) => parseDate(a.start) - parseDate(b.start));
+      const obj = divObj.filter(p => (getEffectiveProductLine(p) || '') === prodId)
+        .sort((a, b) => getHealth(a).score - getHealth(b).score);
 
       if (!ms.length && !obj.length) return;
 
@@ -4393,7 +5055,6 @@ function renderActivePanel() {
           ${prodLabel}
         </div>`;
 
-      // Milestones row
       if (ms.length) {
         html += `<div style="margin-bottom:0.5rem;">
           <div style="font-size:0.62rem;font-weight:700;text-transform:uppercase;letter-spacing:0.06em;color:var(--text-tertiary);margin-bottom:6px;">Milestones</div>
@@ -4403,7 +5064,6 @@ function renderActivePanel() {
         </div>`;
       }
 
-      // Objectives row
       if (obj.length) {
         html += `<div>
           <div style="font-size:0.62rem;font-weight:700;text-transform:uppercase;letter-spacing:0.06em;color:var(--text-tertiary);margin-bottom:6px;">Objectives</div>
@@ -4413,13 +5073,700 @@ function renderActivePanel() {
         </div>`;
       }
 
-      html += `</div>`; // product group
+      html += `</div>`;
     });
 
-    html += `</div>`; // division group
+    html += `</div>`;
   });
 
   grid.innerHTML = html || '<div class="empty-state">No active milestones or objectives.</div>';
+}
+
+// ── Milestones Panel ──────────────────────────────────────────
+
+function renderMilestonesPanel() {
+  const grid = document.getElementById('msGrid');
+  const summary = document.getElementById('msSummary');
+  if (!grid) return;
+
+  const { adjusted, delays } = calculateAdjustedDates();
+  const divFilter = document.getElementById('msFilter')?.value || 'all';
+
+  // Collect all milestones (excluding deliveries)
+  const allMs = projects.filter(p => {
+    if (p.projectType === 'delivery') return false;
+    if (!p.milestone) return false;
+    if (divFilter !== 'all' && getEffectiveDivision(p) !== divFilter) return false;
+    return true;
+  });
+
+  // ── Product abbreviation & milestone numbering ──
+  // Also number ALL milestones per product (not just filtered) so numbers are stable
+  const allMsGlobal = projects.filter(p => p.milestone && p.projectType !== 'delivery');
+  function productAbbrev(prod) {
+    if (!prod) return 'MS';
+    if (prod.code) return prod.code;
+    const name = prod.name || '';
+    const words = name.split(/\s+/).filter(Boolean);
+    if (!words.length) return 'MS';
+    // Extract trailing number from name (e.g. "Gen 2" → 2, "Dura Gen 1" → 1)
+    const trailingNum = name.match(/(\d+)\s*$/);
+    // First significant word (skip articles)
+    let base = words[0];
+    // If first word is short and there are more words, combine
+    if (base.length <= 3 && words.length > 1) base = words[0] + words[1].charAt(0).toUpperCase() + words[1].slice(1);
+    // Truncate to reasonable length
+    if (base.length > 6) base = base.slice(0, 6);
+    // Append trailing number if present and not already in base
+    if (trailingNum && !base.includes(trailingNum[1])) base += trailingNum[1];
+    return base;
+  }
+
+  // Build abbreviation map, handle conflicts
+  const abbrevMap = {};
+  const abbrevCounts = {};
+  products.forEach(prod => {
+    let abbr = productAbbrev(prod);
+    if (abbrevCounts[abbr]) {
+      // Conflict: append distinguishing chars
+      abbrevCounts[abbr]++;
+      abbr = abbr + String.fromCharCode(64 + abbrevCounts[abbr]); // A, B, C...
+    } else {
+      abbrevCounts[abbr] = 1;
+    }
+    abbrevMap[prod.id] = abbr;
+  });
+
+  // Number milestones per product by planned due date
+  const msNumbers = {};
+  const byProduct = {};
+  allMsGlobal.forEach(p => {
+    const prodId = getEffectiveProductLine(p) || '';
+    if (!byProduct[prodId]) byProduct[prodId] = [];
+    byProduct[prodId].push(p);
+  });
+  Object.keys(byProduct).forEach(prodId => {
+    byProduct[prodId].sort((a, b) => parseDate(a.end) - parseDate(b.end));
+    const abbr = abbrevMap[prodId] || 'MS';
+    byProduct[prodId].forEach((p, i) => {
+      msNumbers[p.id] = `${abbr}-${String(i + 1).padStart(2, '0')}`;
+    });
+  });
+
+  // Summary
+  const done = allMs.filter(p => isComplete(p)).length;
+  const overdue = allMs.filter(p => !isComplete(p) && parseDate((adjusted[p.id]||{}).end || p.end) < today).length;
+  if (summary) {
+    summary.innerHTML = [
+      `<span class="summary-chip"><strong>${allMs.length}</strong> milestones</span>`,
+      done ? `<span class="summary-chip good"><strong>${done}</strong> complete</span>` : '',
+      overdue ? `<span class="summary-chip warn"><strong>${overdue}</strong> overdue</span>` : '',
+    ].join('');
+  }
+
+  if (!allMs.length) {
+    grid.innerHTML = '<div class="empty-state">No milestones found.</div>';
+    return;
+  }
+
+  const divOrder = ['fuelcell','electrolyzer','exploration'];
+  const divLabels = { fuelcell:'Fuel Cell', electrolyzer:'Electrolyzer', exploration:'Exploration' };
+  const divColors = { fuelcell:'#534AB7', electrolyzer:'#1D9E75', exploration:'#378ADD' };
+  const activeDivisions = divOrder.filter(d => divFilter === 'all' || d === divFilter);
+
+  function statusBadge(p) {
+    if (isComplete(p)) return '<span style="font-size:0.68rem;font-weight:700;padding:2px 7px;border-radius:10px;background:#EAF3DE;color:#3B6D11;">Complete</span>';
+    const adj = adjusted[p.id] || {};
+    const adjEnd = parseDate(adj.end || p.end);
+    const origEnd = parseDate(adj.originalEnd || p.end);
+    const delayDays = delays[p.id] || 0;
+
+    // Original due date status
+    const origDaysLeft = Math.ceil((origEnd - today) / 86400000);
+    const origColor = origDaysLeft < 0 ? '#A32D2D' : origDaysLeft <= 30 ? '#854F0B' : 'var(--text-secondary)';
+    const origBg = origDaysLeft < 0 ? '#FCEBEB' : origDaysLeft <= 30 ? '#FAEEDA' : 'var(--bg-tertiary)';
+    const origWeight = origDaysLeft <= 30 ? '700' : '600';
+    const origText = origDaysLeft < 0 ? `${Math.abs(origDaysLeft)}d overdue` : `${origDaysLeft}d left`;
+    const origBadge = `<span style="font-size:0.68rem;font-weight:${origWeight};padding:2px 7px;border-radius:10px;background:${origBg};color:${origColor};">${origText}</span>`;
+
+    if (delayDays === 0) return origBadge;
+
+    // Delayed due date status
+    const adjDaysLeft = Math.ceil((adjEnd - today) / 86400000);
+    const adjColor = adjDaysLeft < 0 ? '#A32D2D' : adjDaysLeft <= 30 ? '#854F0B' : 'var(--text-secondary)';
+    const adjBg = adjDaysLeft < 0 ? '#FCEBEB' : adjDaysLeft <= 30 ? '#FAEEDA' : 'var(--bg-tertiary)';
+    const adjWeight = adjDaysLeft <= 30 ? '700' : '600';
+    const adjText = adjDaysLeft < 0 ? `${Math.abs(adjDaysLeft)}d overdue` : `${adjDaysLeft}d left`;
+    const adjBadge = `<span style="font-size:0.68rem;font-weight:${adjWeight};padding:2px 7px;border-radius:10px;background:${adjBg};color:${adjColor};">${adjText}</span>`;
+
+    return `<div style="display:flex;flex-direction:column;gap:3px;">
+      <div style="display:flex;align-items:center;gap:4px;"><span style="font-size:0.58rem;color:var(--text-tertiary);min-width:32px;">Plan:</span>${origBadge}</div>
+      <div style="display:flex;align-items:center;gap:4px;"><span style="font-size:0.58rem;color:var(--text-tertiary);min-width:32px;">Adj:</span>${adjBadge}</div>
+    </div>`;
+  }
+
+  function trlMrlBadge(val, label) {
+    if (!val) return '<span style="color:var(--text-tertiary);font-size:0.72rem;">—</span>';
+    const n = parseInt(val);
+    const color = n >= 7 ? '#3B6D11' : n >= 4 ? '#854F0B' : '#A32D2D';
+    return `<span style="font-size:0.72rem;font-weight:700;color:${color};">${n}</span>`;
+  }
+
+  function kpiCells(p) {
+    const kpis = (p.milestoneKpis || p.kpis || []).filter(k => k.name);
+    const dash = '<span style="color:var(--text-tertiary);font-size:0.72rem;">—</span>';
+    if (!kpis.length) return { names: dash, targets: dash, currents: dash };
+
+    function kpiColor(k) {
+      const cur = k.current ?? 0, tgt = parseFloat(k.target) || 0;
+      const dir = k.direction || 'increase';
+      if (dir === 'decrease') {
+        // Lower is better: met if cur <= tgt, partial if within 110%, missed otherwise
+        if (cur <= tgt) return '#3B6D11';
+        if (tgt > 0 && cur <= tgt * 1.1) return '#854F0B';
+        return '#A32D2D';
+      } else if (dir === 'maintain') {
+        // Closer to target is better
+        const deviation = Math.abs(cur - tgt);
+        const tolerance = Math.abs(tgt) * 0.05 || 1;
+        if (deviation <= tolerance) return '#3B6D11';
+        if (deviation <= tolerance * 2) return '#854F0B';
+        return '#A32D2D';
+      } else {
+        // Increase: higher is better
+        if (tgt <= 0) return cur > 0 ? '#3B6D11' : '#A32D2D';
+        const pct = (cur / tgt) * 100;
+        if (pct >= 100) return '#3B6D11';
+        if (pct >= 90) return '#854F0B';
+        return '#A32D2D';
+      }
+    }
+
+    const names = kpis.map(k => {
+      const kColor = kpiColor(k);
+      return `<div style="display:flex;align-items:center;gap:4px;font-size:0.72rem;line-height:1.6;">
+        <span style="width:6px;height:6px;border-radius:50%;background:${kColor};flex-shrink:0;"></span>
+        <span style="color:var(--text-secondary);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:140px;" title="${k.name}">${k.name}</span>
+      </div>`;
+    }).join('');
+    const targets = kpis.map(k => {
+      const tgt = parseFloat(k.target) || 0;
+      const unit = k.units || k.unit || '';
+      const dir = k.direction === 'decrease' ? '↓' : k.direction === 'maintain' ? '=' : '↑';
+      return `<div style="font-size:0.72rem;line-height:1.6;white-space:nowrap;text-align:right;"><span style="opacity:0.5;margin-right:1px;">${dir}</span>${tgt}${unit ? ' ' + unit : ''}</div>`;
+    }).join('');
+    const currents = kpis.map(k => {
+      const cur = k.current ?? 0;
+      const kColor = kpiColor(k);
+      const unit = k.units || k.unit || '';
+      return `<div style="font-size:0.72rem;font-weight:600;line-height:1.6;white-space:nowrap;text-align:right;color:${kColor};">${cur}${unit ? ' ' + unit : ''}</div>`;
+    }).join('');
+    return { names, targets, currents };
+  }
+
+  const thStyle = 'font-size:0.65rem;font-weight:700;text-transform:uppercase;letter-spacing:0.04em;color:var(--text-tertiary);padding:6px 10px;text-align:left;border-bottom:2px solid var(--border);white-space:nowrap;';
+  const tdStyle = 'font-size:0.78rem;padding:8px 10px;border-bottom:1px solid var(--border-light);vertical-align:top;';
+
+  let html = '';
+
+  activeDivisions.forEach(div => {
+    const divMs = allMs.filter(p => getEffectiveDivision(p) === div);
+    if (!divMs.length) return;
+
+    const prodIds = [...new Set(divMs.map(p => getEffectiveProductLine(p) || ''))];
+    prodIds.sort((a, b) => {
+      if (!a && b) return 1; if (a && !b) return -1;
+      const pa = (products.find(x => x.id === a)||{}).name || '';
+      const pb = (products.find(x => x.id === b)||{}).name || '';
+      return pa.localeCompare(pb);
+    });
+
+    html += `<div style="margin-bottom:1.5rem;">
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:0.875rem;">
+        <div style="width:10px;height:10px;border-radius:50%;background:${divColors[div]};flex-shrink:0;"></div>
+        <span style="font-size:0.95rem;font-weight:700;color:var(--text-primary);">${divLabels[div]}</span>
+        <div style="flex:1;height:1px;background:var(--border-light);"></div>
+      </div>`;
+
+    prodIds.forEach(prodId => {
+      const prod = prodId ? products.find(x => x.id === prodId) : null;
+      const prodLabel = prod ? prod.name : 'No product';
+      const ms = divMs.filter(p => (getEffectiveProductLine(p) || '') === prodId)
+        .sort((a, b) => parseDate(a.end) - parseDate(b.end));
+      if (!ms.length) return;
+
+      html += `<div style="margin-bottom:1.25rem;padding-left:18px;">
+        <div style="font-size:0.78rem;font-weight:600;color:var(--text-secondary);margin-bottom:0.5rem;display:flex;align-items:center;gap:6px;">
+          <span style="width:6px;height:6px;border-radius:50%;background:${divColors[div]};opacity:0.5;flex-shrink:0;"></span>
+          ${prodLabel}
+        </div>
+        <div style="overflow-x:auto;">
+          <table style="width:100%;border-collapse:collapse;min-width:840px;">
+            <thead>
+              <tr>
+                <th style="${thStyle}">Milestone</th>
+                <th style="${thStyle}">Due Date</th>
+                <th style="${thStyle}">KPI</th>
+                <th style="${thStyle}text-align:right;">Target</th>
+                <th style="${thStyle}text-align:right;">Current</th>
+                <th style="${thStyle}">Status</th>
+                <th style="${thStyle}text-align:center;">TRL</th>
+                <th style="${thStyle}text-align:center;">MRL</th>
+                <th style="${thStyle}text-align:center;">Report</th>
+              </tr>
+            </thead>
+            <tbody>`;
+
+      ms.forEach(p => {
+        const adj = adjusted[p.id] || {};
+        const dueDate = parseDate(adj.originalEnd || p.end);
+        const dueDateStr = dueDate.toLocaleDateString('en-US', { month:'short', day:'numeric', year:'numeric' });
+        const delayDays = delays[p.id] || 0;
+        const completed = isComplete(p);
+        const isTentative = !!p.tentative;
+        const rowBg = completed ? 'background:var(--bg-secondary);opacity:0.7;' : isTentative ? 'opacity:0.55;' : '';
+
+        // Due date cell with delay/completion info
+        let dueDateCell = '';
+        if (completed && p.completedDate) {
+          const completedDate = parseDate(p.completedDate);
+          const completedStr = completedDate.toLocaleDateString('en-US', { month:'short', day:'numeric', year:'numeric' });
+          const onTime = completedDate <= dueDate;
+          const diffDays = Math.round((completedDate - dueDate) / 86400000);
+          const diffLabel = diffDays > 0 ? ` (+${diffDays}d)` : diffDays < 0 ? ` (${diffDays}d)` : '';
+          const compColor = onTime ? '#1D9E75' : '#E24B4A';
+          dueDateCell = `<div>${dueDateStr}</div><div style="font-size:0.68rem;color:${compColor};margin-top:2px;">Completed: ${completedStr}${diffLabel}</div>`;
+        } else if (delayDays > 0) {
+          const adjEnd = parseDate(adj.end || p.end);
+          const newDateStr = adjEnd.toLocaleDateString('en-US', { month:'short', day:'numeric', year:'numeric' });
+          dueDateCell = `<div style="color:#E24B4A;text-decoration:line-through;">${dueDateStr}</div><div style="font-size:0.68rem;color:var(--text-secondary);margin-top:2px;">${newDateStr} <span style="color:#E24B4A;font-weight:600;">(+${delayDays}d)</span></div>`;
+        } else {
+          dueDateCell = dueDateStr;
+        }
+
+        const kpi = kpiCells(p);
+        html += `<tr style="cursor:pointer;${rowBg}transition:background 0.1s;" onclick="openModal(${_idArg(p.id)})" onmouseover="this.style.background='var(--bg-secondary)'" onmouseout="this.style.background='${completed?'var(--bg-secondary)':''}'">
+          <td style="${tdStyle}">
+            <div style="display:flex;align-items:center;gap:6px;">
+              <span style="color:${getProjectColors(p).bar};font-size:0.7rem;">◇</span>
+              <span style="font-family:monospace;font-size:0.68rem;padding:1px 6px;border-radius:3px;background:#E6F1FB;color:#0C447C;flex-shrink:0;">${msNumbers[p.id] || 'MS'}</span>
+              <span style="font-weight:500;">${p.name}</span>
+              ${isTentative ? '<span style="font-size:0.6rem;padding:1px 5px;border-radius:4px;border:1px dashed var(--border);color:var(--text-tertiary);flex-shrink:0;">❓ Tentative</span>' : ''}
+            </div>
+          </td>
+          <td style="${tdStyle}white-space:nowrap;">${dueDateCell}</td>
+          <td style="${tdStyle}">${kpi.names}</td>
+          <td style="${tdStyle}text-align:right;">${kpi.targets}</td>
+          <td style="${tdStyle}text-align:right;">${kpi.currents}</td>
+          <td style="${tdStyle}">${statusBadge(p)}</td>
+          <td style="${tdStyle}text-align:center;">${trlMrlBadge(p.trl)}</td>
+          <td style="${tdStyle}text-align:center;">${trlMrlBadge(p.mrl)}</td>
+          <td style="${tdStyle}text-align:center;"><button onclick="event.stopPropagation();openMilestoneReport(${_idArg(p.id)})" style="border:none;background:none;cursor:pointer;font-size:0.8rem;padding:2px 6px;border-radius:4px;color:var(--text-secondary);transition:background 0.1s;" onmouseover="this.style.background='var(--bg-tertiary)'" onmouseout="this.style.background='none'" title="${p.milestoneReport ? 'Open saved report' : 'Create report'}">📄${p.milestoneReport ? (p.milestoneReport.locked ? '🔒' : '') : ''}</button></td>
+        </tr>`;
+      });
+
+      html += `</tbody></table></div></div>`;
+    });
+
+    html += `</div>`;
+  });
+
+  grid.innerHTML = html || '<div class="empty-state">No milestones found.</div>';
+}
+
+function openMilestoneReport(id) {
+  const p = projects.find(x => x.id === id);
+  if (!p) return;
+
+  const saved = p.milestoneReport || {};
+  const prod = products.find(x => x.id === (getEffectiveProductLine(p) || p.productLine));
+  const prodName = prod ? prod.name : 'Project';
+
+  // Compute milestone number (same logic as renderMilestonesPanel)
+  const prodId = getEffectiveProductLine(p) || '';
+  const prodMilestones = projects.filter(x => x.milestone && x.projectType !== 'delivery' && (getEffectiveProductLine(x) || '') === prodId)
+    .sort((a, b) => parseDate(a.end) - parseDate(b.end));
+  function _prodAbbrev(pr) {
+    if (!pr) return 'MS';
+    if (pr.code) return pr.code;
+    const nm = pr.name || '';
+    const words = nm.split(/\s+/).filter(Boolean);
+    if (!words.length) return 'MS';
+    const trailingNum = nm.match(/(\d+)\s*$/);
+    let base = words[0];
+    if (base.length <= 3 && words.length > 1) base = words[0] + words[1].charAt(0).toUpperCase() + words[1].slice(1);
+    if (base.length > 6) base = base.slice(0, 6);
+    if (trailingNum && !base.includes(trailingNum[1])) base += trailingNum[1];
+    return base;
+  }
+  const msAbbr = _prodAbbrev(prod);
+  const msIdx = prodMilestones.findIndex(x => x.id === p.id);
+  const msNumber = `${msAbbr}-${String((msIdx >= 0 ? msIdx : 0) + 1).padStart(2, '0')}`;
+
+  const plannedDate = p.end || '';
+  const actualDate = p.completedDate || '';
+  const completed = isComplete(p);
+  const variance = (plannedDate && actualDate)
+    ? Math.round((parseDate(actualDate) - parseDate(plannedDate)) / 86400000)
+    : null;
+  const varianceStr = variance !== null ? (variance > 0 ? `+${variance} days` : variance < 0 ? `${variance} days` : 'On time') : '';
+  const varianceColor = variance !== null ? (variance > 0 ? '#854F0B' : variance < 0 ? '#3B6D11' : '#3B6D11') : '#666';
+
+  // KPI rows
+  const kpis = (p.milestoneKpis || p.kpis || []).filter(k => k.name);
+  function kpiBadge(k) {
+    const cur = k.current ?? 0, tgt = parseFloat(k.target) || 0;
+    if (!tgt && !cur) return { cls: 'badge-gray', text: 'N/A' };
+    const dir = k.direction || 'increase';
+    let met = false;
+    if (dir === 'increase') met = cur >= tgt;
+    else if (dir === 'decrease') met = cur <= tgt;
+    else met = Math.abs(cur - tgt) <= Math.abs(tgt) * 0.1;
+    const pct = tgt > 0 ? Math.round((cur / tgt) * 100) : 100;
+    if (met) return { cls: 'badge-green', text: 'Met' };
+    if (pct >= 70) return { cls: 'badge-amber', text: 'Partial' };
+    return { cls: 'badge-red', text: 'Missed' };
+  }
+
+  const kpiRowsHtml = kpis.length ? kpis.map(k => {
+    const b = kpiBadge(k);
+    const unit = k.units || k.unit || '';
+    const dir = k.direction === 'decrease' ? '≤' : k.direction === 'maintain' ? '~' : '≥';
+    const savedKpi = (saved.kpiOverrides || {})[k.name];
+    const measuredVal = savedKpi?.measured ?? `${k.current ?? 0}${unit ? ' ' + unit : ''}`;
+    const resultBadge = savedKpi?.result || b.text;
+    const resultCls = resultBadge === 'Met' ? 'badge-green' : resultBadge === 'Missed' ? 'badge-red' : resultBadge === 'Partial' ? 'badge-amber' : 'badge-gray';
+    return `<div class="metric-row">
+      <span contenteditable="true" data-field="kpi-name">${k.name}</span>
+      <span class="mono" contenteditable="true" data-field="kpi-target">${dir} ${k.target || 'TBD'}${unit ? ' ' + unit : ''}</span>
+      <span class="mono" contenteditable="true" data-field="kpi-measured">${measuredVal}</span>
+      <span style="text-align:center"><span class="badge ${resultCls}" contenteditable="true" data-field="kpi-result">${resultBadge}</span></span>
+    </div>`;
+  }).join('') : `<div class="metric-row">
+      <span contenteditable="true" data-field="kpi-name">No KPIs defined</span>
+      <span class="mono" contenteditable="true" data-field="kpi-target">—</span>
+      <span class="mono" contenteditable="true" data-field="kpi-measured">—</span>
+      <span style="text-align:center"><span class="badge badge-gray" contenteditable="true" data-field="kpi-result">N/A</span></span>
+    </div>`;
+
+  // Findings
+  const findings = saved.findings || ['','','',''];
+  const findingsHtml = findings.map((f, i) =>
+    `<div class="finding-row"><div class="finding-num">${String(i+1).padStart(2,'0')}</div><div contenteditable="true" data-field="finding" style="line-height:1.5;">${f || 'Finding or learning from the demonstration.'}</div></div>`
+  ).join('');
+
+  // Actions
+  const actions = saved.actions || [{text:'',owner:'',due:''},{text:'',owner:'',due:''},{text:'',owner:'',due:''}];
+  const actionsHtml = actions.map(a =>
+    `<div class="action-row">
+      <span contenteditable="true" data-field="action-text">${a.text || 'Action item arising from demonstration'}</span>
+      <span contenteditable="true" data-field="action-owner" style="font-family:monospace;font-size:11px;text-align:center;color:#666;">${a.owner || 'Name'}</span>
+      <span contenteditable="true" data-field="action-due" style="font-family:monospace;font-size:11px;text-align:center;color:#666;">${a.due || ''}</span>
+    </div>`
+  ).join('');
+
+  const isLocked = !!saved.locked;
+
+  const templateHtml = `<!DOCTYPE html>
+<html><head><meta charset="UTF-8"><title>Milestone Report — ${p.name}</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; background: #fff; color: #1a1a1a; }
+  .report { max-width: 780px; margin: 0 auto; padding: 2rem; font-size: 13px; }
+  .header { display: grid; grid-template-columns: 1fr auto; align-items: start; border-bottom: 2px solid #185FA5; padding-bottom: 0.75rem; margin-bottom: 1rem; gap: 1rem; }
+  .project-name { font-size: 18px; font-weight: 500; }
+  .label { font-size: 10px; letter-spacing: 0.08em; color: #666; text-transform: uppercase; margin-bottom: 2px; }
+  .milestone-tag { background: #E6F1FB; color: #0C447C; font-size: 11px; font-weight: 500; padding: 3px 10px; border-radius: 4px; font-family: monospace; }
+  .achieved-badge { background: #EAF3DE; color: #3B6D11; font-size: 11px; font-weight: 500; padding: 3px 10px; border-radius: 4px; font-family: monospace; }
+  .pending-badge { background: #FAEEDA; color: #854F0B; font-size: 11px; font-weight: 500; padding: 3px 10px; border-radius: 4px; font-family: monospace; }
+  .meta-grid { display: flex; gap: 1.5rem; }
+  .meta-item .val { font-size: 12px; font-weight: 500; font-family: monospace; }
+  .two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; margin-bottom: 1rem; }
+  .full-col { margin-bottom: 1rem; }
+  .section { border: 0.5px solid #ddd; border-radius: 8px; padding: 0.75rem 1rem; height: 100%; }
+  .section-title { font-size: 10px; letter-spacing: 0.08em; text-transform: uppercase; color: #666; font-weight: 500; margin-bottom: 0.5rem; border-bottom: 0.5px solid #ddd; padding-bottom: 0.4rem; }
+  [contenteditable] { outline: none; }
+  [contenteditable]:hover { background: #f5f5f3; border-radius: 3px; }
+  [contenteditable]:focus { background: #f5f5f3; border-radius: 3px; }
+  .locked [contenteditable] { pointer-events: none; }
+  .locked [contenteditable]:hover { background: transparent; }
+  .metric-row { display: grid; grid-template-columns: 1fr 72px 72px 56px; gap: 8px; align-items: center; padding: 5px 0; border-bottom: 0.5px solid #eee; font-size: 12px; }
+  .metric-row:last-child { border-bottom: none; }
+  .metric-header { display: grid; grid-template-columns: 1fr 72px 72px 56px; gap: 8px; margin-bottom: 3px; }
+  .col-label { font-size: 10px; color: #888; text-align: center; }
+  .mono { font-family: monospace; font-size: 12px; font-weight: 500; text-align: center; }
+  .badge { font-size: 10px; font-weight: 500; padding: 2px 7px; border-radius: 3px; text-align: center; font-family: monospace; display: inline-block; }
+  .badge-green { background: #EAF3DE; color: #3B6D11; }
+  .badge-red { background: #FCEBEB; color: #A32D2D; }
+  .badge-amber { background: #FAEEDA; color: #854F0B; }
+  .badge-gray { background: #f0f0ee; color: #888; }
+  .finding-row { display: flex; gap: 8px; padding: 5px 0; border-bottom: 0.5px solid #eee; font-size: 12px; align-items: flex-start; }
+  .finding-row:last-child { border-bottom: none; }
+  .finding-num { font-family: monospace; font-size: 10px; color: #888; flex-shrink: 0; width: 18px; padding-top: 1px; }
+  .action-row { display: grid; grid-template-columns: 1fr 90px 80px; gap: 8px; padding: 5px 0; border-bottom: 0.5px solid #eee; font-size: 12px; align-items: center; }
+  .action-row:last-child { border-bottom: none; }
+  .stat-row { display: flex; justify-content: space-between; align-items: baseline; padding: 5px 0; border-bottom: 0.5px solid #eee; font-size: 12px; }
+  .stat-row:last-child { border-bottom: none; }
+  .stat-val { font-family: monospace; font-size: 13px; font-weight: 500; }
+  .footer-bar { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 1rem; border-top: 0.5px solid #ddd; padding-top: 0.75rem; margin-top: 0.5rem; }
+  .sig-line { border-bottom: 0.5px solid #aaa; height: 24px; margin-bottom: 4px; }
+  .sig-label { font-size: 10px; color: #888; letter-spacing: 0.05em; text-transform: uppercase; }
+  .toolbar { max-width: 780px; margin: 0 auto; padding: 0.75rem 2rem 2rem; display: flex; justify-content: flex-end; gap: 8px; }
+  .btn { border: none; border-radius: 8px; padding: 8px 18px; font-size: 13px; cursor: pointer; font-family: inherit; }
+  .btn-primary { background: #185FA5; color: #fff; }
+  .btn-primary:hover { background: #0C447C; }
+  .btn-secondary { background: #f0f0ee; color: #333; }
+  .btn-secondary:hover { background: #e4e4e2; }
+  .btn-lock { background: #FAEEDA; color: #854F0B; }
+  .btn-lock.is-locked { background: #FCEBEB; color: #A32D2D; }
+  @media print { .toolbar { display: none; } body { -webkit-print-color-adjust: exact; print-color-adjust: exact; } }
+</style></head><body>
+
+<div class="report${isLocked ? ' locked' : ''}" id="report-root">
+  <div class="header">
+    <div>
+      <div class="label">Project</div>
+      <div class="project-name" contenteditable="true" data-field="projectName">${saved.projectName || prodName}</div>
+      <div style="margin-top:6px;display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
+        <span class="milestone-tag" contenteditable="true" data-field="msTag">${saved.msTag || msNumber}</span>
+        <span style="font-size:12px;color:#666;" contenteditable="true" data-field="msDesc">${saved.msDesc || p.name}</span>
+        <span class="${completed ? 'achieved-badge' : 'pending-badge'}">${completed ? 'Achieved' : 'Pending'}</span>
+      </div>
+    </div>
+    <div style="text-align:right;">
+      <div class="meta-grid" style="justify-content:flex-end;">
+        <div class="meta-item">
+          <div class="label">${completed ? 'Date achieved' : 'Target date'}</div>
+          <div class="val" contenteditable="true" data-field="dateAchieved">${saved.dateAchieved || actualDate || plannedDate}</div>
+        </div>
+        <div class="meta-item">
+          <div class="label">Author</div>
+          <div class="val" contenteditable="true" data-field="author">${saved.author || 'Name'}</div>
+        </div>
+        <div class="meta-item">
+          <div class="label">Version</div>
+          <div class="val" contenteditable="true" data-field="version">${saved.version || 'v1.0'}</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="full-col">
+    <div class="section">
+      <div class="section-title">What was demonstrated</div>
+      <div style="font-size:12px;color:#555;line-height:1.7;" contenteditable="true" data-field="demonstrated">${saved.demonstrated || 'Describe what was physically demonstrated, tested, or shown. Include the setup conditions, operating envelope, duration, and any observers or witnesses present.'}</div>
+    </div>
+  </div>
+
+  <div class="full-col">
+    <div class="section">
+      <div class="section-title">Performance vs. targets</div>
+      <div class="metric-header">
+        <span></span>
+        <span class="col-label">Target</span>
+        <span class="col-label">Measured</span>
+        <span class="col-label">Result</span>
+      </div>
+      ${kpiRowsHtml}
+    </div>
+  </div>
+
+  <div class="two-col">
+    <div class="section">
+      <div class="section-title">Key findings &amp; learnings</div>
+      ${findingsHtml}
+    </div>
+    <div class="section">
+      <div class="section-title">Milestone context</div>
+      <div class="stat-row"><span style="color:#666;">Planned date</span><span class="stat-val" contenteditable="true" data-field="ctxPlanned">${saved.ctxPlanned || plannedDate}</span></div>
+      <div class="stat-row"><span style="color:#666;">Actual date</span><span class="stat-val" contenteditable="true" data-field="ctxActual">${saved.ctxActual || actualDate || '—'}</span></div>
+      <div class="stat-row"><span style="color:#666;">Variance</span><span class="stat-val" contenteditable="true" data-field="ctxVariance" style="color:${varianceColor};">${saved.ctxVariance || varianceStr || '—'}</span></div>
+      <div class="stat-row"><span style="color:#666;">Budget spent</span><span class="stat-val" contenteditable="true" data-field="ctxBudget">${saved.ctxBudget || '—'}</span></div>
+      <div class="stat-row"><span style="color:#666;">Prototype build no.</span><span class="stat-val" contenteditable="true" data-field="ctxBuild">${saved.ctxBuild || '—'}</span></div>
+      <div class="stat-row"><span style="color:#666;">Linked OKR</span><span class="stat-val" contenteditable="true" data-field="ctxOkr">${saved.ctxOkr || '—'}</span></div>
+    </div>
+  </div>
+
+  <div class="full-col">
+    <div class="section">
+      <div class="section-title">Actions required before next milestone</div>
+      <div style="display:grid;grid-template-columns:1fr 90px 80px;gap:8px;margin-bottom:4px;">
+        <span class="col-label" style="text-align:left;">Action item</span>
+        <span class="col-label">Owner</span>
+        <span class="col-label">Due</span>
+      </div>
+      ${actionsHtml}
+    </div>
+  </div>
+
+  <div class="footer-bar">
+    <div><div class="sig-line"></div><div class="sig-label" contenteditable="true" data-field="sig1">${saved.sig1 || 'Technical lead'}</div></div>
+    <div><div class="sig-line"></div><div class="sig-label" contenteditable="true" data-field="sig2">${saved.sig2 || 'CTO / R&D director'}</div></div>
+    <div><div class="sig-line"></div><div class="sig-label" contenteditable="true" data-field="sig3">${saved.sig3 || 'Reviewer / sponsor'}</div></div>
+  </div>
+</div>
+
+<div class="toolbar">
+  <button class="btn btn-lock ${isLocked ? 'is-locked' : ''}" id="lockBtn" onclick="toggleLock()">
+    ${isLocked ? '🔒 Locked' : '🔓 Unlocked'}
+  </button>
+  <button class="btn btn-secondary" onclick="saveReport()">💾 Save</button>
+  <button class="btn btn-primary" onclick="window.print()">Print / Save as PDF</button>
+</div>
+
+<script>
+const MILESTONE_ID = ${typeof id === 'string' ? "'" + id + "'" : id};
+let locked = ${isLocked};
+let unlockPending = false;
+
+function toggleLock() {
+  const btn = document.getElementById('lockBtn');
+  if (!locked) {
+    // Lock immediately
+    locked = true;
+    unlockPending = false;
+    document.getElementById('report-root').classList.add('locked');
+    btn.className = 'btn btn-lock is-locked';
+    btn.textContent = '🔒 Locked';
+    saveReport();
+  } else {
+    // Unlock requires 2 clicks
+    if (!unlockPending) {
+      unlockPending = true;
+      btn.textContent = '🔒 Click again to unlock';
+      btn.style.animation = 'none';
+      setTimeout(() => { if (unlockPending) { unlockPending = false; btn.textContent = '🔒 Locked'; } }, 3000);
+    } else {
+      locked = false;
+      unlockPending = false;
+      document.getElementById('report-root').classList.remove('locked');
+      btn.className = 'btn btn-lock';
+      btn.textContent = '🔓 Unlocked';
+      saveReport();
+    }
+  }
+}
+
+function collectData() {
+  const root = document.getElementById('report-root');
+  const field = (name) => { const el = root.querySelector('[data-field="' + name + '"]'); return el ? el.innerText.trim() : ''; };
+
+  // Findings
+  const findings = [];
+  root.querySelectorAll('[data-field="finding"]').forEach(el => findings.push(el.innerText.trim()));
+
+  // Actions
+  const actions = [];
+  const actionRows = root.querySelectorAll('.action-row');
+  actionRows.forEach(row => {
+    const cells = row.querySelectorAll('[data-field]');
+    actions.push({
+      text: cells[0] ? cells[0].innerText.trim() : '',
+      owner: cells[1] ? cells[1].innerText.trim() : '',
+      due: cells[2] ? cells[2].innerText.trim() : ''
+    });
+  });
+
+  // KPI overrides
+  const kpiOverrides = {};
+  const metricRows = root.querySelectorAll('.metric-row');
+  metricRows.forEach(row => {
+    const name = row.querySelector('[data-field="kpi-name"]');
+    const measured = row.querySelector('[data-field="kpi-measured"]');
+    const result = row.querySelector('[data-field="kpi-result"]');
+    if (name) {
+      kpiOverrides[name.innerText.trim()] = {
+        measured: measured ? measured.innerText.trim() : '',
+        result: result ? result.innerText.trim() : ''
+      };
+    }
+  });
+
+  return {
+    projectName: field('projectName'), msTag: field('msTag'), msDesc: field('msDesc'),
+    dateAchieved: field('dateAchieved'), author: field('author'), version: field('version'),
+    demonstrated: field('demonstrated'),
+    ctxPlanned: field('ctxPlanned'), ctxActual: field('ctxActual'), ctxVariance: field('ctxVariance'),
+    ctxBudget: field('ctxBudget'), ctxBuild: field('ctxBuild'), ctxOkr: field('ctxOkr'),
+    sig1: field('sig1'), sig2: field('sig2'), sig3: field('sig3'),
+    findings, actions, kpiOverrides, locked
+  };
+}
+
+function saveReport() {
+  const data = collectData();
+  if (window.opener && !window.opener.closed) {
+    window.opener._saveMilestoneReport(MILESTONE_ID, data);
+    document.title = 'Milestone Report — ' + (data.msTag || 'Saved') + ' ✓';
+    setTimeout(() => { document.title = 'Milestone Report — ' + (data.msTag || ''); }, 1500);
+  }
+}
+
+function parseNum(s) {
+  if (!s) return null;
+  const m = s.replace(/[^0-9.\\-]/g, '');
+  const n = parseFloat(m);
+  return isNaN(n) ? null : n;
+}
+
+function autoUpdateResults() {
+  document.querySelectorAll('.metric-row').forEach(row => {
+    const tgtEl = row.querySelector('[data-field="kpi-target"]');
+    const measEl = row.querySelector('[data-field="kpi-measured"]');
+    const resEl = row.querySelector('[data-field="kpi-result"]');
+    if (!tgtEl || !measEl || !resEl) return;
+
+    const tgtText = tgtEl.innerText.trim();
+    const measText = measEl.innerText.trim();
+    const tgt = parseNum(tgtText);
+    const meas = parseNum(measText);
+    if (tgt === null || meas === null) return;
+
+    // Detect direction from prefix
+    const isDecrease = tgtText.startsWith('\\u2264') || tgtText.startsWith('<') || tgtText.startsWith('≤');
+    const isMaintain = tgtText.startsWith('~') || tgtText.startsWith('=');
+
+    let met, partial;
+    if (isDecrease) {
+      met = meas <= tgt;
+      partial = !met && meas <= tgt * 1.1;
+    } else if (isMaintain) {
+      met = Math.abs(meas - tgt) <= Math.abs(tgt) * 0.05 || (tgt === 0 && meas === 0);
+      partial = !met && meas >= tgt * 0.9 && meas <= tgt * 1.1;
+    } else {
+      met = meas >= tgt;
+      partial = !met && meas >= tgt * 0.9;
+    }
+
+    const cls = met ? 'badge-green' : partial ? 'badge-amber' : 'badge-red';
+    const label = met ? 'Met' : partial ? 'Partial' : 'Missed';
+    resEl.className = 'badge ' + cls;
+    resEl.innerText = label;
+  });
+}
+
+document.addEventListener('input', function(e) {
+  const f = e.target.dataset ? e.target.dataset.field : '';
+  if (f === 'kpi-target' || f === 'kpi-measured') autoUpdateResults();
+});
+<\/script>
+</body></html>`;
+
+  const popup = window.open('', `ms_report_${id}`, 'width=860,height=900,scrollbars=yes,resizable=yes');
+  if (!popup) { alert('Popup blocked — please allow popups for this site.'); return; }
+  popup.document.open();
+  popup.document.write(templateHtml);
+  popup.document.close();
+}
+
+// Callback for popup to save report data back to the project
+function _saveMilestoneReport(id, data) {
+  const p = projects.find(x => x.id === id);
+  if (!p) return;
+  p.milestoneReport = data;
+  saveData();
+  // Re-render milestones tab if visible
+  if (currentTab === 'milestones') renderMilestonesPanel();
 }
 
 function renderProductsPanel() {
@@ -4522,6 +5869,7 @@ function openProductModal(productId = null) {
     const product = products.find(p => p.id === productId);
     title.textContent = 'Edit product line';
     document.getElementById('productName').value = product.name;
+    document.getElementById('productCode').value = product.code || '';
     document.getElementById('productDescription').value = product.description || '';
     document.getElementById('productDivision').value = product.division;
     tempProductModels = product.models ? JSON.parse(JSON.stringify(product.models)) : [];
@@ -4532,6 +5880,7 @@ function openProductModal(productId = null) {
   } else {
     title.textContent = 'Add product line';
     document.getElementById('productName').value = '';
+    document.getElementById('productCode').value = '';
     document.getElementById('productDescription').value = '';
     document.getElementById('productDivision').value = 'fuelcell';
     tempProductModels = [];
@@ -4592,6 +5941,7 @@ function removeProductModel(idx) {
 
 function saveProduct() {
   const name = document.getElementById('productName').value.trim();
+  const code = document.getElementById('productCode').value.trim();
   const description = document.getElementById('productDescription').value.trim();
   const division = document.getElementById('productDivision').value;
   const pickedColor = document.getElementById('productColorPicker').value;
@@ -4614,9 +5964,9 @@ function saveProduct() {
 
   if (editingProductId) {
     const idx = products.findIndex(p => p.id === editingProductId);
-    products[idx] = { id: editingProductId, name, description, division, models: validModels };
+    products[idx] = { id: editingProductId, name, code, description, division, models: validModels };
   } else {
-    products.push({ id: productId, name, description, division, models: validModels });
+    products.push({ id: productId, name, code, description, division, models: validModels });
   }
   
   saveData();
@@ -4815,6 +6165,7 @@ function switchTab(tab) {
   document.getElementById('equipmentTab').classList.toggle('hidden', tab !== 'equipment');
   document.getElementById('productsTab').classList.toggle('hidden', tab !== 'products');
   document.getElementById('activeTab').classList.toggle('hidden', tab !== 'active');
+  document.getElementById('milestonesTab').classList.toggle('hidden', tab !== 'milestones');
   document.getElementById('changelogTab').classList.toggle('hidden', tab !== 'changelog');
   
   if (isGanttTab) {
@@ -4839,6 +6190,8 @@ function switchTab(tab) {
     renderChangelogPanel();
   } else if (tab === 'active') {
     renderActivePanel();
+  } else if (tab === 'milestones') {
+    renderMilestonesPanel();
   }
 }
 
@@ -5017,22 +6370,28 @@ function renderDepPickerList() {
 
   const candidates = projects.filter(p => {
     if (usedIds.has(p.id)) return false;
-    if (divFilter && p.division !== divFilter) return false;
-    if (typeFilter === 'stagegate') {
+    // Division filter — use effective division for imported projects
+    const effDiv = p._imported ? getEffectiveDivision(p) : (p.division || '');
+    if (divFilter && effDiv !== divFilter && (p.division || '') !== divFilter) return false;
+    // Type filter
+    if (typeFilter === 'external') {
+      if (!p._imported) return false;
+    } else if (typeFilter === 'stagegate') {
       if (!p.isStageGate) return false;
     } else if (typeFilter) {
+      if (p._imported) return false; // non-external type filters exclude imports
       if (p.isStageGate) return false;
       if ((p.projectType || 'task') !== typeFilter) return false;
-    }
-    if (!typeFilter && p.isStageGate) {
-      const editP = projects.find(x => x.id === editingId);
-      if (!editP || (!editP.isStageGate && editP.projectType !== 'objective')) return false;
+    } else {
+      // No type filter — show everything, but limit stage-gates to relevant contexts
+      if (p.isStageGate && !p._imported) {
+        const editP = projects.find(x => x.id === editingId);
+        if (!editP || (!editP.isStageGate && editP.projectType !== 'objective')) return false;
+      }
     }
     if (search && !p.name.toLowerCase().includes(search)) return false;
     return true;
   });
-
-  const alreadyUsed = projects.filter(p => usedIds.has(p.id) && p.id !== editingId);
 
   const container = document.getElementById('depPickerList');
   if (candidates.length === 0) {
@@ -5050,10 +6409,13 @@ function renderDepPickerList() {
       typeLabel = 'Stage-Gate';
       metaLine = `Stage-Gate · ${parent ? parent.name : 'Unknown objective'}`;
     }
-    return `<div class="dep-picker-item" onclick="addDepFromPicker(${p.id})">
+    const importBadge = p._imported
+      ? `<span class="import-badge" style="margin-right:4px;">${p._importLabel === 'Fuel Cell' ? 'FC' : p._importLabel === 'Electrolyzer' ? 'EL' : (p._importSource || '?')}</span>`
+      : '';
+    return `<div class="dep-picker-item" onclick="addDepFromPicker(${_idArg(p.id)})">
       <div class="dep-picker-item-dot" style="background:${colors.bar};${p.isStageGate ? 'border-radius:50%;width:10px;height:10px;border:2px solid '+colors.bar+';' : p.milestone ? 'transform:rotate(45deg);border-radius:1px;' : ''}"></div>
       <div style="flex:1;min-width:0;">
-        <div class="dep-picker-item-name">${p.name}</div>
+        <div class="dep-picker-item-name">${importBadge}${p.name}</div>
         <div class="dep-picker-item-meta">${metaLine}</div>
       </div>
     </div>`;
@@ -5104,11 +6466,14 @@ function renderTempDeps() {
     const depLabel = p.isStageGate
       ? (() => { const par = projects.find(x => x.id === p.parentId); return `${p.name} (${par ? par.name : 'Stage-Gate'})`; })()
       : p.name;
+    const depBadge = p._imported
+      ? `<span class="import-badge" style="margin-right:4px;">${p._importLabel === 'Fuel Cell' ? 'FC' : p._importLabel === 'Electrolyzer' ? 'EL' : (p._importSource || '?')}</span>`
+      : '';
     return `<div class="dep-item">
       <span class="dep-type-badge ${depEntry.type}" onclick="toggleDepType(${idx})" title="Click to toggle type">
         ${isSyn ? 'F→F' : 'F→S'}
       </span>
-      <span style="flex:1;">${depLabel}${leadLabel}</span>
+      <span style="flex:1;display:flex;align-items:center;">${depBadge}${depLabel}${leadLabel}</span>
       ${isSyn ? `<input type="number" class="dep-lead-input" value="${depEntry.leadDays||0}" min="0" placeholder="lead days" title="Lead days before dep finishes" onchange="setDepLead(${idx},parseInt(this.value)||0)" style="width:48px;margin-right:4px;">` : ''}
       <button onclick="removeDep(${idx})">&times;</button>
     </div>`;
@@ -5179,6 +6544,7 @@ function onProjectTypeChange() {
 
   // Show/hide type-specific sections
   document.getElementById('assocObjSection').classList.toggle('hidden', type !== 'initiative');
+  document.getElementById('importAssocSection').classList.toggle('hidden', !hasImportedProjects());
   document.getElementById('keyResultsSection').classList.toggle('hidden', type !== 'objective');
   document.getElementById('stageGatesSection').classList.toggle('hidden', type !== 'objective');
 
@@ -5597,6 +6963,232 @@ function removeAssocObj(id) {
   renderAssocObjectives();
 }
 
+// ── Linked External Projects ────────────────────────────────
+
+function hasImportedProjects() {
+  return projects.some(p => p._imported);
+}
+
+function populateImportAssocSelect() {
+  const sel = document.getElementById('importAssocSelect');
+  if (!sel) return;
+  sel.innerHTML = '<option value="">Select an external project...</option>';
+  projects.filter(p => p._imported && !tempImportAssoc.includes(p.id)).forEach(p => {
+    const badge = p._importLabel || p._importSource || '';
+    sel.innerHTML += `<option value="${p.id}">[${badge}] ${p.name}</option>`;
+  });
+}
+
+function renderImportAssocList() {
+  const container = document.getElementById('importAssocList');
+  if (!container) return;
+  if (!tempImportAssoc.length) {
+    container.innerHTML = '<div style="font-size:0.8rem;color:var(--text-secondary);padding:6px 0;">No external projects linked.</div>';
+  } else {
+    container.innerHTML = tempImportAssoc.map(id => {
+      const p = projects.find(x => x.id === id);
+      const badge = p ? (p._importLabel || p._importSource || '?') : '?';
+      const name = p ? p.name : 'Unknown (' + id + ')';
+      return `<div class="assoc-obj-item"><span style="display:inline-flex;align-items:center;gap:4px;"><span class="import-badge">${badge === 'Fuel Cell' ? 'FC' : badge === 'Electrolyzer' ? 'EL' : badge}</span>${name}</span><button onclick="removeImportAssoc('${id}')">&times;</button></div>`;
+    }).join('');
+  }
+  populateImportAssocSelect();
+}
+
+function addImportAssoc() {
+  const sel = document.getElementById('importAssocSelect');
+  const val = sel.value;
+  if (val && !tempImportAssoc.includes(val)) {
+    tempImportAssoc.push(val);
+    renderImportAssocList();
+  }
+}
+
+function removeImportAssoc(id) {
+  tempImportAssoc = tempImportAssoc.filter(x => x !== id);
+  renderImportAssocList();
+}
+
+/** Reverse lookup: which local projects is an imported project linked to? */
+function getLocalAssocForImported(importedId) {
+  const results = [];
+  for (const [localId, linked] of Object.entries(importAssociations)) {
+    if (Array.isArray(linked) && linked.includes(importedId)) {
+      const p = projects.find(x => String(x.id) === String(localId));
+      if (p) results.push(p);
+    }
+  }
+  return results;
+}
+
+// ── Import Link Panel (lightweight modal for imported projects) ──
+
+let _importLinkId = null;       // ID of the imported project being linked
+let _importLinkLocals = [];     // temp local project links
+
+function openImportLinkPanel(id) {
+  if (IS_READONLY) return;
+  const p = projects.find(x => x.id === id);
+  if (!p || !p._imported) return;
+  _importLinkId = id;
+
+  // Title
+  const badge = p._importLabel === 'Fuel Cell' ? 'FC' : p._importLabel === 'Electrolyzer' ? 'EL' : (p._importSource || '?');
+  document.getElementById('importLinkTitle').innerHTML =
+    `<span class="import-badge">${badge}</span> ${p.name}`;
+
+  // Info summary
+  const info = [];
+  if (p.division) info.push(`Division: ${p.division}`);
+  if (p.start) info.push(`${p.start} → ${p.end || p.start}`);
+  if (p.progress != null) info.push(`Progress: ${p.progress}%`);
+  document.getElementById('importLinkInfo').textContent = info.join('  ·  ');
+
+  // Product dropdowns
+  const prodSel = document.getElementById('importLinkProduct');
+  prodSel.innerHTML = '<option value="">None</option>';
+  products.forEach(pr => {
+    prodSel.innerHTML += `<option value="${pr.id}">${pr.name}</option>`;
+  });
+  const existing = importProductAssoc[id] || {};
+  prodSel.value = existing.productLine || '';
+  updateImportLinkModel();
+  document.getElementById('importLinkModel').value = existing.productModel || '';
+
+  // Local project links (reverse lookup from importAssociations)
+  _importLinkLocals = [];
+  for (const [localId, linked] of Object.entries(importAssociations)) {
+    if (Array.isArray(linked) && linked.includes(id)) {
+      _importLinkLocals.push(typeof localId === 'string' && !isNaN(localId) ? parseInt(localId) : localId);
+    }
+  }
+  renderImportLinkLocals();
+  populateImportLinkLocalSelect();
+
+  // Delay exclusion checkbox
+  document.getElementById('importLinkExcludeDelay').checked = importDelayExclusions.has(id);
+
+  document.getElementById('importLinkOverlay').classList.add('active');
+}
+
+function closeImportLinkPanel(e) {
+  if (e && e.target !== e.currentTarget) return;
+  document.getElementById('importLinkOverlay').classList.remove('active');
+  _importLinkId = null;
+}
+
+function updateImportLinkModel() {
+  const prodId = document.getElementById('importLinkProduct').value;
+  const modelSel = document.getElementById('importLinkModel');
+  modelSel.innerHTML = '<option value="">None</option>';
+  if (!prodId) return;
+  const prod = products.find(pr => pr.id === prodId);
+  if (prod && prod.models) {
+    prod.models.forEach(m => {
+      modelSel.innerHTML += `<option value="${m.id}">${m.name}</option>`;
+    });
+  }
+}
+
+function renderImportLinkLocals() {
+  const container = document.getElementById('importLinkLocalList');
+  if (!container) return;
+  if (!_importLinkLocals.length) {
+    container.innerHTML = '<div style="font-size:0.8rem;color:var(--text-secondary);padding:6px 0;">No local projects linked.</div>';
+  } else {
+    container.innerHTML = _importLinkLocals.map(id => {
+      const p = projects.find(x => String(x.id) === String(id));
+      const name = p ? p.name : 'Unknown (' + id + ')';
+      return `<div class="assoc-obj-item"><span>${name}</span><button onclick="removeImportLinkLocal('${id}')">&times;</button></div>`;
+    }).join('');
+  }
+}
+
+function populateImportLinkLocalSelect() {
+  const sel = document.getElementById('importLinkLocalSelect');
+  sel.innerHTML = '<option value="">Select a local project...</option>';
+  projects.filter(p => !p._imported && !_importLinkLocals.includes(p.id) && String(p.id) !== String(_importLinkId)).forEach(p => {
+    sel.innerHTML += `<option value="${p.id}">${p.name}</option>`;
+  });
+}
+
+function addImportLinkLocal() {
+  const sel = document.getElementById('importLinkLocalSelect');
+  let val = sel.value;
+  if (!val) return;
+  if (!isNaN(val)) val = parseInt(val);
+  if (!_importLinkLocals.includes(val)) {
+    _importLinkLocals.push(val);
+    renderImportLinkLocals();
+    populateImportLinkLocalSelect();
+  }
+}
+
+function removeImportLinkLocal(id) {
+  if (!isNaN(id)) id = parseInt(id);
+  _importLinkLocals = _importLinkLocals.filter(x => String(x) !== String(id));
+  renderImportLinkLocals();
+  populateImportLinkLocalSelect();
+}
+
+function saveImportLinkPanel() {
+  if (!_importLinkId) return;
+
+  // Save product association
+  const productLine = document.getElementById('importLinkProduct').value;
+  const productModel = document.getElementById('importLinkModel').value;
+  if (productLine) {
+    importProductAssoc[_importLinkId] = { productLine, productModel: productModel || '' };
+  } else {
+    delete importProductAssoc[_importLinkId];
+  }
+
+  // Save local project links (update importAssociations from the imported side)
+  // First remove this imported ID from all existing local entries
+  for (const [localId, linked] of Object.entries(importAssociations)) {
+    importAssociations[localId] = linked.filter(x => x !== _importLinkId);
+    if (importAssociations[localId].length === 0) delete importAssociations[localId];
+  }
+  // Then add it back to each selected local project
+  _importLinkLocals.forEach(localId => {
+    if (!importAssociations[localId]) importAssociations[localId] = [];
+    if (!importAssociations[localId].includes(_importLinkId)) {
+      importAssociations[localId].push(_importLinkId);
+    }
+  });
+
+  // Save delay exclusion
+  if (document.getElementById('importLinkExcludeDelay').checked) {
+    importDelayExclusions.add(_importLinkId);
+  } else {
+    importDelayExclusions.delete(_importLinkId);
+  }
+
+  // Cascade associations to imported children (sub-projects, stage-gates)
+  // Only set on children that don't already have their own explicit association
+  (function cascadeToChildren(parentId) {
+    projects.filter(c => c._imported && c.parentId === parentId).forEach(child => {
+      // Cascade product association if child doesn't have its own
+      if (productLine && !importProductAssoc[child.id]) {
+        importProductAssoc[child.id] = { productLine, productModel: productModel || '' };
+      }
+      // Cascade local project links if child isn't already linked
+      _importLinkLocals.forEach(localId => {
+        if (!importAssociations[localId]) importAssociations[localId] = [];
+        if (!importAssociations[localId].includes(child.id)) {
+          importAssociations[localId].push(child.id);
+        }
+      });
+      // Recurse into deeper children
+      cascadeToChildren(child.id);
+    });
+  })(_importLinkId);
+
+  saveData();
+  closeImportLinkPanel();
+  render();
+}
+
 // ── Stage-gate sub-project sync ──────────────────────────────
 
 function syncStageGateSubProjects(objectiveId, stageGates, linked, objStart, division) {
@@ -5634,7 +7226,7 @@ function syncStageGateSubProjects(objectiveId, stageGates, linked, objStart, div
     let internalDeps = [];
     if (linked && idx > 0) {
       const prevGate = validGates[idx - 1];
-      if (prevGate.subProjectId) internalDeps = [prevGate.subProjectId];
+      if (prevGate.subProjectId) internalDeps = [{ id: prevGate.subProjectId, type: 'blocking', leadDays: 0, hidden: true }];
     }
 
     // Preserve any existing cross-objective or external deps on this gate sub-project
@@ -5671,7 +7263,14 @@ function syncStageGateSubProjects(objectiveId, stageGates, linked, objStart, div
 
     if (subProj) {
       const idx2 = projects.findIndex(p => p.id === subProj.id);
-      projects[idx2] = { ...projects[idx2], ...sgData, id: subProj.id };
+      // Preserve manuallyCompleted and completedDate from existing sub-project
+      const preserved = {};
+      if (subProj.manuallyCompleted) {
+        preserved.manuallyCompleted = true;
+        preserved.completedDate = subProj.completedDate;
+        preserved.progress = subProj.progress; // keep existing progress, don't recalc from KPIs
+      }
+      projects[idx2] = { ...projects[idx2], ...sgData, ...preserved, id: subProj.id };
       return { ...sg, subProjectId: subProj.id };
     } else {
       const newId = nextId++;
@@ -6149,6 +7748,11 @@ function generateProjectId(p) {
 
 function openModal(id = null) {
   if (IS_READONLY) return; // readonly mode: no editing
+  // Block editing of imported (external-bin) projects — open link panel instead
+  if (id != null) {
+    const target = projects.find(x => x.id === id);
+    if (target && target._imported) { openImportLinkPanel(id); return; }
+  }
   editingId = id;
   populateParentSelect(id);
   sgExpandedIdx = new Set();
@@ -6191,17 +7795,18 @@ function openModal(id = null) {
     document.getElementById('projProgress').value = p.progress || 0;
     document.getElementById('progressLabel').textContent = (p.progress || 0) + '%';
     document.getElementById('projLocked').checked = !!p.locked;
+    document.getElementById('projTentative').checked = !!p.tentative;
+    document.getElementById('projTrl').value = p.trl || '';
+    document.getElementById('projMrl').value = p.mrl || '';
     document.getElementById('projNotes').value = p.notes || '';
-    // Ensure completedDate is populated for manually-completed stage-gates
-    if (p.isStageGate && p.manuallyCompleted && !p.completedDate) {
-      p.completedDate = formatDate(today);
-    }
     document.getElementById('projCompletedDate').value = p.completedDate || '';
-    // For objectives, compute current progress from KRs to decide if complete
-    let showCompleted;
+    // Determine if project should show completed date section
+    let isCompletedForModal;
     if ((p.projectType || 'task') === 'objective') {
       const krs = p.keyResults || [];
-      if (krs.length > 0) {
+      if (p.manuallyCompleted) {
+        isCompletedForModal = true;
+      } else if (krs.length > 0) {
         const avg = krs.reduce((s, kr) => {
           let pct;
           if (kr.trackingType === 'kpi') pct = calculateKpiProgress(kr.kpis || []);
@@ -6209,14 +7814,14 @@ function openModal(id = null) {
           else pct = kr.progress || 0;
           return s + pct;
         }, 0) / krs.length;
-        showCompleted = Math.round(avg) === 100;
+        isCompletedForModal = Math.round(avg) === 100;
       } else {
-        showCompleted = isComplete(p);
+        isCompletedForModal = p.progress === 100;
       }
     } else {
-      showCompleted = isComplete(p);
+      isCompletedForModal = isComplete(p);
     }
-    toggleCompletedDateSection(showCompleted);
+    toggleCompletedDateSection(isCompletedForModal);
     // For checklist type, sync the checkbox
     if ((p.projectType || 'task') === 'checklist') {
       document.getElementById('projChecklistDone').checked = p.progress === 100;
@@ -6237,6 +7842,7 @@ function openModal(id = null) {
     tempStageGates = Array.isArray(p.stageGates) ? JSON.parse(JSON.stringify(p.stageGates)) : [];
     tempStageGatesLinked = p.stageGatesLinked !== false;
     tempAssocObjectives = Array.isArray(p.associatedObjectives) ? [...p.associatedObjectives] : [];
+    tempImportAssoc = Array.isArray(importAssociations[p.id]) ? [...importAssociations[p.id]] : [];
 
     toggleProgressType();
     renderKpiList();
@@ -6258,6 +7864,9 @@ function openModal(id = null) {
     document.getElementById('projProgress').value = 0;
     document.getElementById('progressLabel').textContent = '0%';
     document.getElementById('projLocked').checked = false;
+    document.getElementById('projTentative').checked = false;
+    document.getElementById('projTrl').value = '';
+    document.getElementById('projMrl').value = '';
     document.getElementById('projNotes').value = '';
     document.getElementById('projCompletedDate').value = '';
     toggleCompletedDateSection(false);
@@ -6277,6 +7886,7 @@ function openModal(id = null) {
     tempStageGates = [];
     tempStageGatesLinked = true;
     tempAssocObjectives = [];
+    tempImportAssoc = [];
 
     toggleProgressType();
     renderKpiList();
@@ -6293,6 +7903,7 @@ function openModal(id = null) {
   renderKeyResults();
   renderStageGates();
   renderAssocObjectives();
+  renderImportAssocList();
   renderTempResources();
   renderTempEquipment();
   renderTempDeps();
@@ -6320,15 +7931,13 @@ function toggleChecklistDone() {
 function updateProgressLabel() {
   const val = parseInt(document.getElementById('projProgress').value);
   document.getElementById('progressLabel').textContent = val + '%';
-  toggleCompletedDateSection(val === 100);
+  const editP = editingId ? projects.find(x => x.id === editingId) : null;
+  toggleCompletedDateSection(val === 100 || !!(editP && editP.manuallyCompleted));
 }
 
 function toggleCompletedDateSection(show) {
   const section = document.getElementById('completedDateSection');
   if (!section) return;
-  // Never hide the section for a manually-completed stage-gate
-  const editP = editingId ? projects.find(x => x.id === editingId) : null;
-  if (!show && editP && editP.isStageGate && editP.manuallyCompleted) show = true;
   section.classList.toggle('hidden', !show);
   if (show && !document.getElementById('projCompletedDate').value) {
     document.getElementById('projCompletedDate').value = formatDate(today);
@@ -6466,7 +8075,8 @@ function updateKpiProgress() {
   } else {
     fill.style.background = '#E24B4A';
   }
-  toggleCompletedDateSection(progress === 100);
+  const editP = editingId ? projects.find(x => x.id === editingId) : null;
+  toggleCompletedDateSection(progress === 100 || !!(editP && editP.manuallyCompleted));
 }
 
 function updateImpactPreview() {
@@ -6529,6 +8139,9 @@ function saveProject() {
   const productLine = document.getElementById('projProductLine').value;
   const productModel = document.getElementById('projProductModel').value;
   const locked = document.getElementById('projLocked').checked;
+  const tentative = document.getElementById('projTentative').checked;
+  const trl = document.getElementById('projTrl').value || null;
+  const mrl = document.getElementById('projMrl').value || null;
   const notes = document.getElementById('projNotes').value.trim();
   const stageGatesLinked = document.getElementById('sgLinked').checked;
   const completedDate = document.getElementById('projCompletedDate').value || null;
@@ -6590,7 +8203,7 @@ function saveProject() {
     progress, progressType, kpis, milestoneKpis, keyResults,
     stageGates, stageGatesLinked, associatedObjectives,
     projectType, milestone: isMilestone,
-    locked, datePrecision, completedDate,
+    locked, tentative, datePrecision, completedDate, trl, mrl,
     resources: [...tempResources],
     equipment: [...tempEquipment],
     dependencies: [...tempDeps],
@@ -6598,19 +8211,21 @@ function saveProject() {
     isStageGate: false, stageGateId: null  // overridden below for existing stage-gates
   };
 
-  // Preserve isStageGate / stageGateId / baselineEndDate / manuallyCompleted from the existing project record
+  // Preserve manuallyCompleted from existing project
+  if (editingId) {
+    const existing = projects.find(x => x.id === editingId);
+    if (existing && existing.manuallyCompleted) {
+      projectData.manuallyCompleted = true;
+    }
+  }
+
+  // Preserve isStageGate / stageGateId / baselineEndDate from the existing project record
   if (editingId) {
     const existing = projects.find(x => x.id === editingId);
     if (existing) {
-      if (existing.isStageGate)      projectData.isStageGate      = true;
-      if (existing.stageGateId)      projectData.stageGateId      = existing.stageGateId;
-      if (existing.baselineEndDate)  projectData.baselineEndDate  = existing.baselineEndDate;
-      // manuallyCompleted is toggled directly on the live project via toggleModalComplete/quickComplete
-      // — it is not wired to a form field, so always carry it forward from the live record.
-      projectData.manuallyCompleted = !!existing.manuallyCompleted;
-      if (existing.manuallyCompleted && !projectData.completedDate) {
-        projectData.completedDate = existing.completedDate || formatDate(today);
-      }
+      if (existing.isStageGate)     projectData.isStageGate     = true;
+      if (existing.stageGateId)     projectData.stageGateId     = existing.stageGateId;
+      if (existing.baselineEndDate) projectData.baselineEndDate = existing.baselineEndDate;
     }
   }
 
@@ -6640,11 +8255,25 @@ function saveProject() {
     if (!whatIfMode) recordProjectCreated(createdProj);
   }
 
+  // Save import associations for this project
+  if (tempImportAssoc.length > 0) {
+    importAssociations[savedId] = [...tempImportAssoc];
+  } else {
+    delete importAssociations[savedId];
+  }
+
   // Sync stage-gate sub-projects for Objective type
   if (projectType === 'objective') {
     const updatedGates = syncStageGateSubProjects(savedId, stageGates, stageGatesLinked, start, division);
     const projIdx = projects.findIndex(p => p.id === savedId);
     if (projIdx !== -1) projects[projIdx].stageGates = updatedGates;
+  }
+
+  // Cascade tentative flag to all descendants
+  if (tentative) {
+    (function setChildrenTentative(pid) {
+      projects.forEach(c => { if (c.parentId === pid) { c.tentative = true; setChildrenTentative(c.id); } });
+    })(savedId);
   }
 
   if (!whatIfMode) saveData();
@@ -6760,6 +8389,9 @@ function _deleteProjectConfirmed() {
     if (x.dependencies) x.dependencies = x.dependencies.filter(d => !toDelete.has(typeof d === 'object' ? d.id : d));
     if (x.associatedObjectives) x.associatedObjectives = x.associatedObjectives.filter(id => !toDelete.has(id));
   });
+
+  // Clean up import associations for deleted projects
+  toDelete.forEach(id => delete importAssociations[id]);
 
   saveData();
   closeModal();
@@ -7044,7 +8676,7 @@ function jumpToToday() {
 }
 
 function exportData() {
-  const data = JSON.stringify({ projects, resources, equipment, products }, null, 2);
+  const data = JSON.stringify({ projects: projects.filter(p => !p._imported), resources, equipment, products }, null, 2);
   const blob = new Blob([data], { type: 'application/json' });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
@@ -7073,7 +8705,7 @@ function importData(event) {
           resources = Array.isArray(importResources) ? importResources : [...defaultResources];
           equipment = Array.isArray(importEquipment) ? importEquipment : [...defaultEquipment];
           products = Array.isArray(importProducts) ? importProducts : JSON.parse(JSON.stringify(defaultProducts));
-          nextId = Math.max(...projects.map(p => p.id), 9999) + 1;
+          nextId = Math.max(...projects.filter(p => typeof p.id === 'number').map(p => p.id), 9999) + 1;
           saveData();
           render();
         });
@@ -7153,7 +8785,7 @@ function clearAllData() {
       resources = Array.isArray(snap.resources) ? snap.resources : [...defaultResources];
       equipment = Array.isArray(snap.equipment) ? snap.equipment : [...defaultEquipment];
       products = Array.isArray(snap.products) ? snap.products : JSON.parse(JSON.stringify(defaultProducts));
-      nextId = Math.max(...projects.map(p => p.id), 9999) + 1;
+      nextId = Math.max(...projects.filter(p => typeof p.id === 'number').map(p => p.id), 9999) + 1;
     };
   } else {
     message = 'Reset to factory defaults? This cannot be undone.';
@@ -7330,6 +8962,8 @@ async function initApp() {
     </div>`;
     // Still render the app in local-only mode
     await loadData();
+    // Default: collapse all objectives (including imported)
+    projects.filter(p => p.projectType === 'objective').forEach(p => collapsed.add(p.id));
     updateSnapshotIndicator();
     render();
     updateDivisionTabColors();
@@ -7338,6 +8972,8 @@ async function initApp() {
   }
 
   await loadData();
+  // Default: collapse all objectives (including imported)
+  projects.filter(p => p.projectType === 'objective').forEach(p => collapsed.add(p.id));
   updateSnapshotIndicator();
   render();
   updateDivisionTabColors();
@@ -7353,6 +8989,7 @@ async function initApp() {
       if (syncBtn) syncBtn.style.display = '';
       const saveBtn = document.getElementById('confSaveBtn');
       if (saveBtn) saveBtn.style.display = '';
+      showImportTypesBtn();
     }
   } else {
     // Show setup hint in the sync bar
@@ -7360,9 +8997,69 @@ async function initApp() {
     if (el) el.innerHTML = `<span style="font-size:0.72rem;color:var(--text-tertiary);">
       💡 <strong>Shared mode not configured:</strong> Set <code>JSONBIN_BIN_ID</code> and <code>JSONBIN_API_KEY</code> at the top of the script (see setup instructions in the file comments). Running in local-only mode until configured.
     </span>`;
+    showImportTypesBtn();
   }
 }
-initApp();
+initApp().then(() => {
+  const params = new URLSearchParams(window.location.search);
+  const urlDiv = params.get('division');
+  if (urlDiv && ['fuelcell','electrolyzer','exploration'].includes(urlDiv)) {
+    filterState.division = new Set([urlDiv]);
+    const activeFilterEl = document.getElementById('activeFilter');
+    if (activeFilterEl) activeFilterEl.value = urlDiv;
+    const msFilterEl = document.getElementById('msFilter');
+    if (msFilterEl) msFilterEl.value = urlDiv;
+    render();
+  }
+  const urlTab = params.get('tab');
+  if (urlTab) switchTab(urlTab);
+
+  // Active tab type filter
+  const urlType = params.get('type');
+  if (urlType && ['milestones','objectives','both'].includes(urlType)) {
+    const typeEl = document.getElementById('activeTypeFilter');
+    if (typeEl) typeEl.value = urlType;
+  }
+
+  // Active tab status filter
+  const urlStatus = params.get('status');
+  if (urlStatus && ['ontrack','watch','atrisk','all'].includes(urlStatus)) {
+    const statusEl = document.getElementById('activeStatusFilter');
+    if (statusEl) statusEl.value = urlStatus;
+  }
+
+  // Product filter by milestone code
+  const urlProduct = params.get('product');
+  if (urlProduct) {
+    // Match against product code (exact, case-insensitive) or auto-generated abbreviation
+    const code = urlProduct.toLowerCase();
+    const match = products.find(pr => {
+      if (pr.code && pr.code.toLowerCase() === code) return true;
+      // Fallback: auto-generate abbreviation and compare
+      const nm = pr.name || '';
+      const words = nm.split(/\s+/).filter(Boolean);
+      if (!words.length) return false;
+      const trailingNum = nm.match(/(\d+)\s*$/);
+      let base = words[0];
+      if (base.length <= 3 && words.length > 1) base = words[0] + words[1].charAt(0).toUpperCase() + words[1].slice(1);
+      if (base.length > 6) base = base.slice(0, 6);
+      if (trailingNum && !base.includes(trailingNum[1])) base += trailingNum[1];
+      return base.toLowerCase() === code;
+    });
+    if (match) {
+      filterState.product = new Set([match.id]);
+      // Also set division to match
+      if (!urlDiv) {
+        filterState.division = new Set([match.division]);
+        const activeFilterEl = document.getElementById('activeFilter');
+        if (activeFilterEl) activeFilterEl.value = match.division;
+        const msFilterEl = document.getElementById('msFilter');
+        if (msFilterEl) msFilterEl.value = match.division;
+      }
+      render();
+    }
+  }
+});
 function openShortcuts() {
   document.getElementById('shortcutsOverlay').classList.add('active');
 }
@@ -7426,6 +9123,7 @@ window.addEventListener('DOMContentLoaded', function() {
           <option value="initiative">Initiative</option>
           <option value="objective">Objective</option>
           <option value="stagegate">Stage-Gate</option>
+          <option value="external">External (imported)</option>
         </select>
       </div>
     </div>
