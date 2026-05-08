@@ -2503,6 +2503,13 @@ function computeStatusSnapshot() {
   try {
     const { adjusted, delays } = calculateAdjustedDates();
     const objectives = {};
+    // Build id→name map once so we can resolve parent names without an O(n) scan
+    // per objective (otherwise the snapshot is O(objectives × projects)).
+    const nameById = new Map();
+    projects.forEach(p => nameById.set(p.id, p.name || ''));
+    // Imported objectives have null parentId; their effective parent is
+    // resolved via importAssociations (same as the active panel).
+    const effParentMap = _buildEffParentMap();
     projects.forEach(p => {
       if (!p || p.projectType !== 'objective') return;
       // Imported projects ARE included: rd-gantt is the company-wide view, so
